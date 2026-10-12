@@ -1,5 +1,7 @@
 # textamp
 
+For this NixOS/MacBook MVP, start with [MVP.md](MVP.md) and run `./run`.
+
 A terminal music player for Subsonic-compatible servers (including Navidrome),
 AudioMuse discovery, WebDAV and local folders. Audio plays on this computer.
 

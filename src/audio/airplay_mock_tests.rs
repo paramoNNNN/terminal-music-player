@@ -3,6 +3,14 @@ use std::os::unix::fs::PermissionsExt;
 fn fixture(fail: bool) -> (tempfile::TempDir, AirplayBackend) {
     let root = tempfile::tempdir().unwrap();
     let helper = root.path().join("cliairplay");
+    // NixOS does not provide /usr/bin/python3. Resolve the interpreter from
+    // the test environment and use its absolute path in the generated helper.
+    let python = std::process::Command::new("python3")
+        .args(["-c", "import sys; print(sys.executable)"])
+        .output()
+        .expect("AirPlay fixtures require python3 on PATH");
+    assert!(python.status.success());
+    let python = String::from_utf8(python.stdout).unwrap();
     let script = r#"#!/usr/bin/python3
 import sys, os, select, time
 from pathlib import Path
@@ -36,7 +44,8 @@ while True:
             if line == b'ACTION=START':
                 print('[STATUS] started requested_unix_ms=0 at_unix_ms=' + str(int(time.time()*1000)+200), file=sys.stderr, flush=True)
             if line == b'ACTION=STOP': sys.exit(0)
-"#.replace("FAIL", if fail { "True" } else { "False" });
+"#.replace("FAIL", if fail { "True" } else { "False" })
+    .replace("#!/usr/bin/python3", &format!("#!{}", python.trim()));
     std::fs::write(&helper, script).unwrap();
     std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
     let backend = AirplayBackend {

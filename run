@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+if [[ ! -x target/release/textamp ]]; then
+  if command -v nix >/dev/null 2>&1; then
+    nix develop --command cargo build --locked --release --bin textamp
+  else
+    cargo build --locked --release --bin textamp
+  fi
+fi
+exec ./target/release/textamp "$@"

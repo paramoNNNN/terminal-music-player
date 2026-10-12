@@ -113,15 +113,13 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn handoff_reports_failure_and_times_out() {
-        run_command(Command::new("/usr/bin/true"), Duration::from_secs(1))
+        run_command(Command::new("true"), Duration::from_secs(1))
             .await
             .unwrap();
-        assert!(
-            run_command(Command::new("/usr/bin/false"), Duration::from_secs(1))
-                .await
-                .is_err()
-        );
-        let mut command = Command::new("/bin/sleep");
+        assert!(run_command(Command::new("false"), Duration::from_secs(1))
+            .await
+            .is_err());
+        let mut command = Command::new("sleep");
         command.arg("10");
         let error = run_command(command, Duration::from_millis(20))
             .await

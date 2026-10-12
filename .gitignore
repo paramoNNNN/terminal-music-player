@@ -1,4 +1,7 @@
 /target
+/dist
+/result
+/result-*
 
 # dev loop artifacts
 dev/out/
