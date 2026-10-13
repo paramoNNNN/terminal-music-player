@@ -19,6 +19,7 @@ pub struct Session {
     pub source: Source,
     pub client: Client,
     pub extensions: std::collections::HashSet<String>,
+    pub extensions_verified: bool,
 }
 impl Session {
     pub fn cache_store(&self) -> anyhow::Result<crate::library::cache::Store> {
@@ -33,6 +34,19 @@ impl Session {
             .strip_prefix(&prefix)
             .ok_or_else(|| anyhow::anyhow!("Item belongs to a different account"))?;
         Ok(urlencoding::decode(id)?.into_owned())
+    }
+
+    /// A bitrate limit alone lets the server choose an arbitrary transcoder
+    /// (including codecs unsupported by the native decoder, such as Opus).
+    pub fn playback_url(&self, song_id: &str, bitrate_kbps: u32) -> anyhow::Result<reqwest::Url> {
+        let mut params = vec![("id", song_id.to_owned())];
+        if bitrate_kbps > 0 {
+            params.push(("maxBitRate", bitrate_kbps.to_string()));
+            params.push(("format", "mp3".into()));
+        } else {
+            params.push(("format", "raw".into()));
+        }
+        self.client.url("stream", &params)
     }
 
     pub async fn album_tracks(&self, key: &str) -> anyhow::Result<Vec<Track>> {
@@ -85,6 +99,16 @@ pub enum NavAction {
     Text {
         request_id: u64,
         result: Result<String, String>,
+    },
+    FavoriteSaved {
+        library_key: Option<String>,
+        key: String,
+        favorited: bool,
+    },
+    PlaybackReport {
+        track: Track,
+        state: &'static str,
+        position_ms: u64,
     },
     RestoreQueue {
         request_id: u64,
@@ -186,6 +210,7 @@ pub async fn choose(
                         )?,
                         source,
                         extensions: Default::default(),
+                        extensions_verified: false,
                     })
                 }
                 .await
@@ -218,6 +243,7 @@ async fn connect(
         client: Client::new(&source, password, folder)?,
         source,
         extensions: Default::default(),
+        extensions_verified: false,
     };
     discover(&mut session).await?;
     Ok(session)
@@ -251,6 +277,7 @@ async fn discover(session: &mut Session) -> anyhow::Result<()> {
             Default::default()
         }
     };
+    session.extensions_verified = true;
     session.client.folder = session
         .source
         .canonical_folder(session.client.folder.clone());
@@ -297,11 +324,14 @@ pub async fn dispatch(
                     (crate::app::state::BrowseItem::from_tracks(&tracks), tracks)
                 }
             };
-            state.artist_nav.columns = vec![crate::app::state::BrowseColumn::new_with_tracks(
-                kind.label(),
-                items,
-                tracks,
-            )];
+            let mut column =
+                crate::app::state::BrowseColumn::new_with_tracks(kind.label(), items, tracks);
+            column.artwork_visible = state.artwork.default_visible
+                && column
+                    .items
+                    .iter()
+                    .any(|item| matches!(item, crate::app::state::BrowseItem::Album { .. }));
+            state.artist_nav.columns = vec![column];
             state.artist_nav.loading = false;
         }
         NavAction::Text { request_id, result } => {
@@ -313,6 +343,90 @@ pub async fn dispatch(
             {
                 popup.text = result.unwrap_or_else(|e| e);
             }
+        }
+        NavAction::FavoriteSaved {
+            library_key,
+            key,
+            favorited,
+        } => {
+            if state.active_library != library_key {
+                return Ok(vec![]);
+            }
+            let update = |tracks: &mut Vec<Track>| {
+                for track in tracks.iter_mut().filter(|track| track.rating_key == key) {
+                    track.favorited = Some(favorited);
+                    if !favorited {
+                        track.metadata_tags.remove("Favorited");
+                    }
+                }
+            };
+            update(&mut state.queue.tracks);
+            update(&mut state.queue.original);
+            update(&mut state.radio.tracks);
+            update(&mut state.library.all_tracks);
+            update(&mut state.library.selected_album_tracks);
+            update(&mut state.similar.tracks);
+            for nav in [
+                &mut state.artist_nav,
+                &mut state.playlist_nav,
+                &mut state.tag_nav,
+            ] {
+                for column in &mut nav.columns {
+                    column.update_track_favorite(&key, favorited);
+                }
+            }
+            for tracks in state
+                .track_pane_similar
+                .values_mut()
+                .filter_map(|result| result.as_mut().ok())
+            {
+                update(tracks);
+            }
+            if let Some(page) = &mut state.artist_overview {
+                update(&mut page.tracks);
+                update(&mut page.album_tracks);
+                update(&mut page.rankings.tracks);
+                update(&mut page.rankings.community);
+            }
+            if let Some(results) = &mut state.search.results {
+                update(&mut results.tracks);
+            }
+            if let Some(launcher) = &mut state.popups.adventure_launcher {
+                if let Some(results) = &mut launcher.results {
+                    update(&mut results.tracks);
+                }
+                if let crate::app::state::AdventureDrillLevel::AlbumTracks { tracks, .. } =
+                    &mut launcher.drill
+                {
+                    update(tracks);
+                }
+                for track in launcher
+                    .start_track
+                    .iter_mut()
+                    .chain(launcher.end_track.iter_mut())
+                {
+                    if track.rating_key == key {
+                        track.favorited = Some(favorited);
+                    }
+                }
+            }
+            for track in state
+                .adventure
+                .start_track
+                .iter_mut()
+                .chain(state.adventure.end_track.iter_mut())
+            {
+                if track.rating_key == key {
+                    track.favorited = Some(favorited);
+                }
+            }
+        }
+        NavAction::PlaybackReport {
+            track,
+            state: report_state,
+            position_ms,
+        } => {
+            effects::report_playback(state, tx, &track, report_state, position_ms);
         }
         NavAction::RestoreQueue {
             request_id,

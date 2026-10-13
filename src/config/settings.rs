@@ -379,7 +379,7 @@ fn default_album_art_size() -> u16 {
 }
 
 fn default_theme() -> String {
-    "solarized-dark".to_string()
+    "terminal".to_string()
 }
 
 fn default_artwork_mode() -> String {

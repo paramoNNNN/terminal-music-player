@@ -10,3 +10,5 @@ pub use spectrogram::{
 pub use waveform::{
     generate_waveform, generate_waveform_from_pcm, WaveformCache, WaveformData, WaveformError,
 };
+
+pub mod system_controls;

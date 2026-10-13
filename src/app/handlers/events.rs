@@ -38,6 +38,8 @@ pub(crate) fn reset_account_scoped_state(state: &mut AppState) {
     let old_station_children = std::mem::take(&mut state.station_children_cache);
     let old_similar = std::mem::take(&mut state.similar);
     let old_related = std::mem::take(&mut state.related);
+    let old_artist_overview = state.artist_overview.take();
+    let old_label_overview = state.label_overview.take();
     let old_search = std::mem::take(&mut state.search);
     let old_adventure = std::mem::take(&mut state.adventure);
     let old_track_pane_similar = std::mem::take(&mut state.track_pane_similar);
@@ -84,6 +86,8 @@ pub(crate) fn reset_account_scoped_state(state: &mut AppState) {
         drop(old_station_children);
         drop(old_similar);
         drop(old_related);
+        drop(old_artist_overview);
+        drop(old_label_overview);
         drop(old_search);
         drop(old_adventure);
         drop(old_track_pane_similar);
@@ -679,7 +683,8 @@ pub fn handle_app_event(
                     selected_yes: true,
                 });
             } else {
-                state.set_error("Playback stopped after multiple consecutive errors".to_string());
+                tracing::error!("Playback stopped after repeated failures: {msg}");
+                state.set_error(format!("Playback stopped after repeated errors:\n{msg}"));
             }
             vec![]
         }
@@ -758,6 +763,7 @@ pub fn handle_app_event(
                 return vec![];
             }
             state.artwork.grid_pending.remove(&key);
+            state.artwork.grid_failures.remove(&key);
             state.artwork.insert_grid_art(key, data);
             vec![]
         }
@@ -766,6 +772,10 @@ pub fn handle_app_event(
                 return vec![];
             }
             state.artwork.grid_pending.remove(&key);
+            state
+                .artwork
+                .grid_failures
+                .insert(key, std::time::Instant::now());
             vec![]
         }
 
@@ -873,6 +883,15 @@ pub fn handle_app_event(
             if state.view == crate::app::state::View::Browse {
                 if let Some(track) = state.focused_track() {
                     let key = track.rating_key.clone();
+                    if let Some(thumb) = track.best_thumb() {
+                        if state.artwork.needs_grid_art(&key) {
+                            return vec![SystemAction::LoadAlbumArt(vec![(
+                                key.clone(),
+                                thumb.to_owned(),
+                            )])
+                            .into()];
+                        }
+                    }
                     if crate::app::sources::sonic::enabled(state)
                         && !key.is_empty()
                         && !state.track_pane_similar.contains_key(&key)
@@ -883,6 +902,173 @@ pub fn handle_app_event(
                         }
                         .into()];
                     }
+                }
+            }
+
+            // Similar-track results use the same library artwork cache as
+            // browse rows. Load a small window around the current selection.
+            if state.view == crate::app::state::View::Similar
+                && state.similar.mode == crate::app::state::SimilarMode::Tracks
+            {
+                let start = state
+                    .list_state
+                    .similar_index
+                    .saturating_sub(5)
+                    .min(state.similar.tracks.len());
+                let end = (start + 20).min(state.similar.tracks.len());
+                let art: Vec<_> = state.similar.tracks[start..end]
+                    .iter()
+                    .filter_map(|track| {
+                        let key = track.rating_key.clone();
+                        let thumb = track.best_thumb()?.to_owned();
+                        (state.artwork.needs_grid_art(&key)).then_some((key, thumb))
+                    })
+                    .collect();
+                if !art.is_empty() {
+                    return vec![SystemAction::LoadAlbumArt(art).into()];
+                }
+            }
+
+            // Every album listing and related-artist header gets artwork.
+            // A bounded visible window shares the per-library download cache.
+            if state.artwork.grid_pending.len() < 4 {
+                use crate::app::state::{AdventureDrillLevel, SimilarMode, View};
+                let mut candidates: Vec<(String, String)> = Vec::new();
+                let mut add = |key: &str, thumb: Option<&str>| {
+                    if let Some(thumb) = thumb {
+                        candidates.push((key.to_owned(), thumb.to_owned()));
+                    }
+                };
+                if state.view == View::Related {
+                    if let Some(page) = &state.artist_overview {
+                        if let Some((key, thumb)) = page.artwork() {
+                            add(key, Some(thumb));
+                        }
+                        let first = state.hit_regions.artist_overview.as_ref().map_or_else(
+                            || page.index.saturating_sub(10),
+                            |regions| regions.first_index,
+                        );
+                        if page.tab.is_artists() {
+                            for found in page.rankings.relations.artists.iter().skip(first).take(30)
+                            {
+                                add(&found.artist.rating_key, found.artist.thumb.as_deref());
+                            }
+                        } else if page.selected_album.is_none() && page.tab.is_albums() {
+                            for album in page.display_albums().iter().skip(first).take(30) {
+                                let thumb = album.thumb.as_deref().or_else(|| {
+                                    page.tracks
+                                        .iter()
+                                        .find(|track| {
+                                            track.parent_rating_key.as_deref()
+                                                == Some(&album.rating_key)
+                                        })
+                                        .and_then(crate::library::models::Track::best_thumb)
+                                });
+                                add(&album.rating_key, thumb);
+                            }
+                        } else {
+                            for track in page.display_tracks().iter().skip(first).take(30) {
+                                add(&track.rating_key, track.best_thumb());
+                            }
+                        }
+                    } else if let Some(page) = &state.label_overview {
+                        let first = state.hit_regions.label_overview.as_ref().map_or_else(
+                            || page.index.saturating_sub(10),
+                            |regions| regions.first_index,
+                        );
+                        if page.label.is_some() && page.artists_tab {
+                            for artist in page.artists.iter().skip(first).take(30) {
+                                add(&artist.rating_key, artist.thumb.as_deref());
+                            }
+                        } else if page.label.is_some() {
+                            for album in page.albums.iter().skip(first).take(30) {
+                                add(&album.rating_key, album.thumb.as_deref());
+                            }
+                        }
+                    } else {
+                        let start = state
+                            .scroll
+                            .related
+                            .unwrap_or_else(|| state.list_state.related_index.saturating_sub(10));
+                        let mut index = 0;
+                        for group in &state.related.groups {
+                            if (start..start + 30).contains(&index) {
+                                add(&group.artist.rating_key, group.artist.thumb.as_deref());
+                            }
+                            index += 1;
+                            for album in &group.albums {
+                                if (start..start + 30).contains(&index) {
+                                    add(&album.rating_key, album.thumb.as_deref());
+                                }
+                                index += 1;
+                            }
+                        }
+                    }
+                }
+                if state.view == View::Similar && state.similar.mode == SimilarMode::Albums {
+                    let start = state
+                        .scroll
+                        .similar
+                        .unwrap_or_else(|| state.list_state.similar_index.saturating_sub(10));
+                    for album in state.similar.albums.iter().skip(start).take(30) {
+                        add(&album.rating_key, album.thumb.as_deref());
+                    }
+                }
+                if state.view == View::Search || state.popups.search_active {
+                    if let Some(results) = &state.search.results {
+                        let (tab, index) =
+                            if state.search.tab == crate::app::state::SearchTab::Global {
+                                crate::app::handlers::dispatch_search::resolve_global_index(
+                                    results,
+                                    state.list_state.search_item_index,
+                                )
+                            } else {
+                                (state.search.tab, state.list_state.search_item_index)
+                            };
+                        let start = if tab == crate::app::state::SearchTab::Albums {
+                            index.saturating_sub(10)
+                        } else {
+                            0
+                        };
+                        for album in results.albums.iter().skip(start).take(40) {
+                            add(&album.rating_key, album.thumb.as_deref());
+                        }
+                    }
+                }
+                if let Some(launcher) = &state.popups.adventure_launcher {
+                    if matches!(launcher.drill, AdventureDrillLevel::Search) {
+                        if let Some(results) = &launcher.results {
+                            let first =
+                                if launcher.search_tab == crate::app::state::SearchTab::Albums {
+                                    launcher.item_index.saturating_sub(10)
+                                } else {
+                                    launcher
+                                        .item_index
+                                        .saturating_sub(results.artists.len())
+                                        .saturating_sub(10)
+                                };
+                            for album in results.albums.iter().skip(first).take(40) {
+                                add(&album.rating_key, album.thumb.as_deref());
+                            }
+                        }
+                    }
+                    if let AdventureDrillLevel::ArtistAlbums { albums, .. } = &launcher.drill {
+                        for album in albums
+                            .iter()
+                            .skip(launcher.item_index.saturating_sub(10))
+                            .take(30)
+                        {
+                            add(&album.rating_key, album.thumb.as_deref());
+                        }
+                    }
+                }
+                let mut seen = std::collections::HashSet::new();
+                candidates.retain(|(key, _)| {
+                    seen.insert(key.clone()) && state.artwork.needs_grid_art(key)
+                });
+                candidates.truncate(4 - state.artwork.grid_pending.len());
+                if !candidates.is_empty() {
+                    return vec![SystemAction::LoadAlbumArt(candidates).into()];
                 }
             }
 
@@ -955,9 +1141,7 @@ pub fn handle_app_event(
                                 key,
                                 thumb: Some(thumb),
                                 ..
-                            } if !state.artwork.grid_cache.contains_key(key)
-                                && !state.artwork.grid_pending.contains(key) =>
-                            {
+                            } if state.artwork.needs_grid_art(key) => {
                                 to_load.push((key.clone(), thumb.clone()));
                             }
                             BrowseItem::AllTracks {
@@ -976,9 +1160,7 @@ pub fn handle_app_event(
                                 key,
                                 thumb: Some(thumb),
                                 ..
-                            } if !state.artwork.grid_cache.contains_key(key)
-                                && !state.artwork.grid_pending.contains(key) =>
-                            {
+                            } if state.artwork.needs_grid_art(key) => {
                                 to_load.push((key.clone(), thumb.clone()));
                             }
                             _ => {}

@@ -55,7 +55,7 @@ pub fn render(frame: &mut Frame, state: &RenderState, area: Rect) {
     }
     let footer = Rect::new(area.x, area.bottom() - 1, area.width, 1);
     frame.render_widget(
-        Paragraph::new("Esc/F7 back · ←/→ or Tab modes · 1–7 · : commands")
+        Paragraph::new("Esc/F7 back · ←/→ or Tab modes · 1–7 · F favorite · : commands")
             .style(Style::default().fg(t.colors.fg_muted)),
         footer,
     );

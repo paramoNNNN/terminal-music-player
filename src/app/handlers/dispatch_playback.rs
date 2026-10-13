@@ -19,6 +19,9 @@ pub async fn dispatch(
 
     audio: &mut AudioPlayer,
 ) -> Result<Vec<Action>> {
+    let report_action = action.clone();
+    let report_track = state.current_track().cloned();
+    let report_position = state.playback.position_ms;
     if matches!(
         action,
         PlaybackAction::Stop | PlaybackAction::ResetForAccountChange
@@ -316,5 +319,32 @@ pub async fn dispatch(
             helpers::play_current_track(event_tx, state, audio);
         }
     }
-    Ok(vec![])
+    let mut follow_ups = Vec::new();
+    if let Some(track) = report_track {
+        let report_state = match report_action {
+            PlaybackAction::TogglePlayPause if state.playback.status == PlayStatus::Paused => {
+                Some("paused")
+            }
+            PlaybackAction::TogglePlayPause if state.playback.status == PlayStatus::Playing => {
+                Some("playing")
+            }
+            PlaybackAction::Stop => Some("stopped"),
+            _ => None,
+        };
+        if let Some(report_state) = report_state {
+            follow_ups.push(
+                crate::app::sources::navidrome::NavAction::PlaybackReport {
+                    track,
+                    state: report_state,
+                    position_ms: if report_state == "stopped" {
+                        0
+                    } else {
+                        report_position
+                    },
+                }
+                .into(),
+            );
+        }
+    }
+    Ok(follow_ups)
 }

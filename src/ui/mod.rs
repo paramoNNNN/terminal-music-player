@@ -51,6 +51,24 @@ pub fn render(frame: &mut ratatui::Frame, state: &AppState) -> RenderFeedback {
         marquee_subtitle: RefCell::new(state.marquee_subtitle.clone()),
     };
     app::render(frame, &input);
+    if state.theme == crate::app::theme::ThemeName::Terminal {
+        // Reverse the terminal defaults for selection. ANSI bright white/black
+        // can be swapped by light palettes and are not reliable contrast colors.
+        let selection = theme::theme().colors.bg_selection;
+        for cell in &mut frame.buffer_mut().content {
+            // Graphics cells carry protocol escapes/image IDs; reverse video
+            // must only affect ordinary text, never those image placeholders.
+            if cell.bg == selection && !cell.skip && !cell.symbol().contains('\x1b') {
+                cell.set_fg(ratatui::style::Color::Reset)
+                    .set_bg(ratatui::style::Color::Reset)
+                    .set_style(
+                        ratatui::style::Style::default()
+                            .add_modifier(ratatui::style::Modifier::REVERSED),
+                    );
+            }
+        }
+    }
+
     RenderFeedback {
         hit_regions: input.hit_regions.into_inner(),
         marquee: input.marquee.into_inner(),

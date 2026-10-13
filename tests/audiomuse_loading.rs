@@ -18,6 +18,7 @@ fn state() -> AppState {
         client: textamp::navidrome::Client::new(&source, "unused".into(), None).unwrap(),
         source,
         extensions: Default::default(),
+        extensions_verified: false,
     };
     let mut state = AppState::new();
     state.sources.audiomuse.connections.insert(

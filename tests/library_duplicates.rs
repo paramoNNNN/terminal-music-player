@@ -211,6 +211,7 @@ async fn navidrome_rejects_duplicate_account_before_connecting_and_on_completion
                         .unwrap(),
                     source: candidate.clone(),
                     extensions: Default::default(),
+                    extensions_verified: false,
                 }),
             }
         } else {

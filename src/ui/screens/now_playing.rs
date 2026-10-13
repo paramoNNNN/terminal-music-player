@@ -9,6 +9,7 @@ use crate::app::state::{
 use crate::services::NavigationService;
 use crate::ui::artwork::ArtworkRenderer;
 use crate::ui::theme::theme;
+use crate::ui::widgets::track_list::favorite_marker;
 use crate::ui::RenderState as AppState;
 use crate::util::format_duration;
 
@@ -387,7 +388,7 @@ fn render_track_list(frame: &mut Frame, state: &AppState, area: Rect) {
 
     // 2-row layout: each track takes 2 rows (title + artist-album subtitle)
     let visible_item_count = visible_height / 2;
-    let max_text_width = inner.width.saturating_sub(4) as usize;
+    let max_text_width = inner.width.saturating_sub(6) as usize;
     let subtitle_width = (inner.width as usize).saturating_sub(7);
 
     let total_display = tracks.len();
@@ -515,7 +516,12 @@ fn render_track_list(frame: &mut Frame, state: &AppState, area: Rect) {
 
         let text = Text::from(vec![
             Line::from(Span::styled(
-                format!("{}{}", prefix, title_display),
+                format!(
+                    "{}{} {}",
+                    prefix,
+                    favorite_marker(track.favorited),
+                    title_display
+                ),
                 line1_fg,
             )),
             Line::from(Span::styled(format!("     {}", subtitle_display), line2_fg)),
@@ -588,7 +594,7 @@ pub fn render_visualizer_mode(frame: &mut Frame, state: &AppState, area: Rect) {
 
     if show_artwork {
         // Top panel: match queue artwork sizing (40% of height)
-        let top_height = (area.height * 40 / 100).max(8);
+        let top_height = (area.height * 40 / 100).max(10);
         // Artwork width matches height for square image (2:1 char aspect ratio),
         // capped at 40% of total width
         let art_width = (top_height * 2).min(area.width * 40 / 100).max(25);
@@ -613,8 +619,8 @@ pub fn render_visualizer_mode(frame: &mut Frame, state: &AppState, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5), // Track info
-                Constraint::Min(8),    // Waveform
+                Constraint::Length(10), // Track info, quality and favorite status
+                Constraint::Min(8),     // Waveform
             ])
             .split(area);
 
@@ -685,18 +691,17 @@ fn render_track_info_panel(frame: &mut Frame, state: &AppState, area: Rect) {
         let position = format_duration(state.playback.position_ms);
         let duration = format_duration(track.duration_ms());
 
-        let text = vec![
+        let mut text = vec![
             Line::from(vec![
                 Span::styled(
                     format!("{} ", status_icon),
                     Style::default().fg(t.colors.fg_accent),
                 ),
                 Span::styled(
-                    title.to_string(),
+                    format!("{} {}", favorite_marker(track.favorited), title),
                     Style::default().fg(t.colors.fg_primary).bold(),
                 ),
             ]),
-            Line::from(""),
             Line::from(vec![
                 Span::styled("   ", Style::default()),
                 Span::styled(
@@ -708,7 +713,6 @@ fn render_track_info_panel(frame: &mut Frame, state: &AppState, area: Rect) {
                 Span::styled("   ", Style::default()),
                 Span::styled(album.to_string(), Style::default().fg(t.colors.fg_muted)),
             ]),
-            Line::from(""),
             Line::from(vec![
                 Span::styled("   ", Style::default()),
                 Span::styled(
@@ -718,7 +722,17 @@ fn render_track_info_panel(frame: &mut Frame, state: &AppState, area: Rect) {
             ]),
         ];
 
-        let paragraph = Paragraph::new(text);
+        if let Some((quality, favorite)) = playback_details(state) {
+            text.push(Line::styled(
+                format!("   {quality}"),
+                Style::default().fg(t.colors.fg_muted),
+            ));
+            text.push(Line::styled(
+                format!("   {favorite}"),
+                Style::default().fg(t.colors.fg_accent),
+            ));
+        }
+        let paragraph = Paragraph::new(text).wrap(ratatui::widgets::Wrap { trim: false });
         frame.render_widget(paragraph, inner);
     } else {
         let msg = Paragraph::new("No track playing")
@@ -726,6 +740,38 @@ fn render_track_info_panel(frame: &mut Frame, state: &AppState, area: Rect) {
             .alignment(Alignment::Center);
         frame.render_widget(msg, inner);
     }
+}
+
+/// Normal Now Playing uses a compact, tab-free waveform regardless of the
+/// remembered full-screen visualization mode.
+pub(crate) fn render_compact_waveform(frame: &mut Frame, state: &AppState, area: Rect) {
+    let t = theme();
+    let block = Block::default()
+        .title(" waveform ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(if state.view == View::NowPlaying {
+            t.colors.title_focused
+        } else {
+            t.colors.border
+        }));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    state.hit_regions.borrow_mut().now_playing_content =
+        Some(crate::app::presentation::NowPlayingRegions {
+            visualizer_tab_area: Rect::default(),
+            visualizer_content_area: inner,
+        });
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let mut lines = Vec::with_capacity(inner.height as usize);
+    draw_waveform_seekbar(
+        &mut lines,
+        state,
+        inner.height as usize,
+        inner.width as usize,
+    );
+    frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), inner);
 }
 
 /// Render the six-mode visualizer panel. Tabs occupy one row above the canvas.
@@ -1517,4 +1563,42 @@ fn intensity_color(value: u8) -> Color {
             Color::Rgb(255, 255, (t * 255 / 54) as u8)
         }
     }
+}
+
+/// Source properties are distinct from the requested transcode limit. The
+/// server can emit variable bitrate audio, so the latter is not measured output.
+pub(crate) fn playback_details(state: &AppState) -> Option<(String, &'static str)> {
+    let track = state.current_track()?;
+    let limit = state
+        .playback
+        .stream_bitrate_limit
+        .unwrap_or(state.transcode_kbps);
+    let source_rate = track.media.first().and_then(|media| media.bitrate);
+    let quality = if matches!(
+        track.origin,
+        crate::library::track::TrackOrigin::Navidrome { .. }
+    ) && limit > 0
+    {
+        let source = source_rate
+            .map(|rate| format!(" · source {rate} kbps"))
+            .unwrap_or_default();
+        format!("MP3 · requested {} kbps{source}", limit)
+    } else {
+        let codec = track
+            .media
+            .first()
+            .and_then(|media| media.audio_codec.as_deref())
+            .map(str::to_uppercase)
+            .unwrap_or_default();
+        match source_rate {
+            Some(rate) => format!("{codec} · {rate} kbps"),
+            None => format!("{codec} · Bit rate unavailable"),
+        }
+    };
+    let favorite = match track.favorited {
+        Some(true) => "♥ Favorited",
+        Some(false) => "Not favorited",
+        None => "Favorite status unavailable",
+    };
+    Some((quality, favorite))
 }

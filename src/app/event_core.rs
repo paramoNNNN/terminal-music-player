@@ -33,7 +33,7 @@ pub enum DataEvent {
     },
 
     ArtistLoaded(Artist),
-    AlbumLoaded(Album),
+    AlbumLoaded(Box<Album>),
     AlbumTracksLoaded {
         request_key: String,
         tracks: Vec<Track>,

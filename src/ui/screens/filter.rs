@@ -7,6 +7,7 @@ use crate::library::models::SearchResults;
 use crate::services::NavigationService;
 use crate::ui::layout::centered_rect;
 use crate::ui::theme::theme;
+use crate::ui::widgets::track_list::favorite_marker;
 use crate::ui::RenderState as AppState;
 
 use ratatui::prelude::*;
@@ -183,14 +184,7 @@ fn render_results(frame: &mut Frame, state: &AppState, area: Rect) {
     let selected_idx = state.list_state.search_item_index;
 
     match state.search.tab {
-        SearchTab::Global => render_all_tab(
-            frame,
-            results,
-            is_results_focused,
-            selected_idx,
-            scroll_pin,
-            area,
-        ),
+        SearchTab::Global => render_all_tab(frame, results, state, area),
         SearchTab::Artists => render_single_section(
             frame,
             &results.artists,
@@ -218,7 +212,7 @@ fn render_results(frame: &mut Frame, state: &AppState, area: Rect) {
                 } else {
                     a.title.clone()
                 };
-                format!("{} - {}", title, artist)
+                format!("    {} - {}", title, artist)
             },
             is_results_focused,
             selected_idx,
@@ -244,7 +238,12 @@ fn render_results(frame: &mut Frame, state: &AppState, area: Rect) {
                     } else {
                         &tr.title
                     };
-                    format!("{} - {}", title, tr.track_artist())
+                    format!(
+                        "{} {} - {}",
+                        favorite_marker(tr.favorited),
+                        title,
+                        tr.track_artist()
+                    )
                 },
                 is_results_focused,
                 selected_idx,
@@ -262,18 +261,38 @@ fn render_results(frame: &mut Frame, state: &AppState, area: Rect) {
             area,
         ),
     }
+    if state.search.tab == SearchTab::Albums {
+        let first = scroll_pin.unwrap_or_else(|| {
+            NavigationService::calc_scroll_offset(
+                selected_idx,
+                area.height as usize,
+                results.albums.len(),
+            )
+        });
+        for (row, album) in results
+            .albums
+            .iter()
+            .skip(first)
+            .take(area.height as usize)
+            .enumerate()
+        {
+            crate::ui::artwork::render_thumbnail(
+                frame,
+                state,
+                Rect::new(area.x, area.y + row as u16, area.width.min(2), 1),
+                &album.rating_key,
+                album.thumb.as_deref(),
+            );
+        }
+    }
 }
 
 /// Render the All tab with section headers.
-fn render_all_tab(
-    frame: &mut Frame,
-    results: &SearchResults,
-    is_focused: bool,
-    selected_idx: usize,
-    scroll_pin: Option<usize>,
-    area: Rect,
-) {
+fn render_all_tab(frame: &mut Frame, results: &SearchResults, state: &AppState, area: Rect) {
     let t = theme();
+    let is_focused = state.search.focus == SearchFocus::Results;
+    let selected_idx = state.list_state.search_item_index;
+    let scroll_pin = state.scroll.search;
 
     if results.is_empty() {
         let empty = Paragraph::new("No matches found")
@@ -322,6 +341,7 @@ fn render_all_tab(
         }
     };
 
+    let mut covers = Vec::new();
     let mut items = Vec::with_capacity(visible_height.min(total_entries));
     for display_index in scroll_offset..(scroll_offset + visible_height).min(total_entries) {
         let mut local = display_index;
@@ -362,8 +382,20 @@ fn render_all_tab(
                         } else {
                             &track.title
                         };
-                        format!("  {} - {}", title, track.track_artist())
+                        format!(
+                            "  {} {} - {}",
+                            favorite_marker(track.favorited),
+                            title,
+                            track.track_artist()
+                        )
                     }
+                };
+                let text = if section == 1 {
+                    let album = &results.albums[local];
+                    covers.push((display_index - scroll_offset, album));
+                    format!("    {text}")
+                } else {
+                    text
                 };
                 let global_index = global_base + local;
                 let style = if is_focused && global_index == selected_idx {
@@ -382,6 +414,15 @@ fn render_all_tab(
     }
 
     frame.render_widget(List::new(items), area);
+    for (row, album) in covers {
+        crate::ui::artwork::render_thumbnail(
+            frame,
+            state,
+            Rect::new(area.x, area.y + row as u16, area.width.min(2), 1),
+            &album.rating_key,
+            album.thumb.as_deref(),
+        );
+    }
 
     // Scrollbar for long lists
     if total_entries > visible_height {

@@ -150,11 +150,13 @@ impl Recommendations {
                 Ok(tracks)
             }
             .await;
-            result.with_context(|| {
-                native.err().map_or_else(
-                    || "Navidrome returned no analyzed matches".into(),
-                    |e| e.to_string(),
-                )
+            result.map_err(|audio_muse| match native {
+                Err(navidrome) => anyhow::anyhow!(
+                    "Sonic Similarity failed in Navidrome ({navidrome:#}) and AudioMuse ({audio_muse:#})"
+                ),
+                Ok(_) => anyhow::anyhow!(
+                    "Navidrome returned no Sonic Similarity matches; AudioMuse failed ({audio_muse:#})"
+                ),
             })
         })
         .await
@@ -240,7 +242,12 @@ impl Recommendations {
                 self.validate_path(tracks, start, end, count)
             }
             .await
-            .with_context(|| native.unwrap_err().to_string())
+            .map_err(|audio_muse| {
+                anyhow::anyhow!(
+                    "Sonic path failed in Navidrome ({}) and AudioMuse ({audio_muse:#})",
+                    native.unwrap_err()
+                )
+            })
         })
         .await
         .context("Analysis request timed out")?
@@ -355,6 +362,7 @@ mod tests {
             client: crate::navidrome::Client::new(&source, "fixture".into(), None).unwrap(),
             source,
             extensions: HashSet::new(),
+            extensions_verified: false,
         };
         let connection = crate::audiomuse::Connection {
             url,

@@ -247,7 +247,7 @@ fn render_textamp(frame: &mut Frame, state: &AppState, area: Rect) {
         offset,
     );
     let help = match page {
-        SettingsPage::Themes => "Highlight to preview. Enter applies and saves the theme.",
+        SettingsPage::Themes => "Terminal follows your terminal colors. Highlight to preview; Enter applies and saves.",
         SettingsPage::Display if state.active_library.is_none() => "Enter Sound output to choose speakers. Open a library to configure its artwork.",
         SettingsPage::Display if settings.contains(&TextampSetting::Transcode) => "Artwork choices apply to this library. ( ) sets rendering; [X] shows covers in new columns. Streaming quality cycles bit rates.",
         SettingsPage::Display => "Artwork choices apply to this library. ( ) sets rendering; [X] shows covers in new album columns.",

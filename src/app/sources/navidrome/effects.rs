@@ -3,10 +3,11 @@ use crate::app::action::*;
 use crate::app::event::{ArtworkEvent, PlaylistEvent};
 use crate::library::track::TrackOrigin;
 
+mod artist;
 pub(super) mod browse;
 pub(super) mod discovery;
 mod media;
-pub use media::{play, scrobble};
+pub use media::{play, report_playback, scrobble};
 
 pub fn event(event: impl Into<Event>) -> Action {
     NavAction::Event(Box::new(event.into())).into()
@@ -106,6 +107,9 @@ pub fn intercept(
         if state.sources.nav_collection.is_some() {
             state.set_browse_category(*category, *preserve_sections_focus);
         }
+    }
+    if let Some(actions) = artist::intercept(action, state, tx, &session) {
+        return Some(actions);
     }
     if let Some(actions) = browse::intercept(action, state, tx, &session) {
         return Some(actions);

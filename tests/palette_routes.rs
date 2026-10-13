@@ -111,7 +111,7 @@ fn queue_query_still_ranks_queue_first() {
 }
 
 #[test]
-fn every_browse_track_list_plays_its_visible_tail_not_a_hidden_library_column() {
+fn every_browse_track_list_plays_visible_order_from_selection_not_a_hidden_column() {
     for &category in BrowseCategory::all() {
         if category == BrowseCategory::Folders {
             continue; // Folder items do not carry full Track objects.
@@ -126,8 +126,8 @@ fn every_browse_track_list_plays_its_visible_tail_not_a_hidden_library_column() 
         state.browse_nav_mut().unwrap().columns = vec![visible];
         let actions = run_label(&mut state, "Play track and following");
         assert!(
-            matches!(actions.as_slice(), [Action::Queue(QueueAction::PlayTracksNow(tracks))]
-            if keys(tracks) == ["selected", "after"]),
+            matches!(actions.as_slice(), [Action::Queue(QueueAction::PlayCatalog { tracks, index: 1 })]
+            if keys(tracks) == ["before", "selected", "after"]),
             "{category:?}: {actions:?}"
         );
     }
@@ -161,8 +161,8 @@ fn queue_and_radio_contexts_ignore_retained_browse_and_similar_selections() {
             );
             let actions = run_label(&mut state, "Play track and following");
             assert!(
-                matches!(actions.as_slice(), [Action::Queue(QueueAction::PlayTracksNow(tracks))]
-                if keys(tracks) == expected)
+                matches!(actions.as_slice(), [Action::Queue(QueueAction::PlayCatalog { tracks, index: 1 })]
+                if keys(&tracks[1..]) == expected)
             );
             let actions = run_label(&mut state, "Play track");
             assert!(

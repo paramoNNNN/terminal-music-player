@@ -32,6 +32,14 @@ pub struct Genre {
 #[serde(rename_all = "camelCase")]
 pub struct Album {
     #[serde(default)]
+    pub artists: Vec<Artist>,
+    pub play_count: Option<u64>,
+    #[serde(default)]
+    pub record_labels: Vec<RecordLabel>,
+    #[serde(alias = "releaseCountry")]
+    pub country: Option<String>,
+    pub version: Option<String>,
+    #[serde(default)]
     pub is_compilation: bool,
     #[serde(default)]
     pub release_types: Vec<String>,
@@ -57,6 +65,9 @@ pub struct Album {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Song {
+    pub bit_depth: Option<u32>,
+    pub sampling_rate: Option<u32>,
+    pub channel_count: Option<u8>,
     pub play_count: Option<u64>,
     pub id: String,
     pub title: String,
@@ -80,12 +91,29 @@ pub struct Song {
     pub genres: Vec<Genre>,
     pub starred: Option<String>,
     pub user_rating: Option<u8>,
+    #[serde(flatten)]
+    pub extra_tags: std::collections::BTreeMap<String, serde_json::Value>,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct ItemDate {
     pub year: Option<u16>,
     pub month: Option<u8>,
     pub day: Option<u8>,
+}
+impl ItemDate {
+    pub fn display(&self) -> Option<String> {
+        let year = self.year?;
+        Some(match (self.month, self.day) {
+            (Some(month), Some(day)) => format!("{year:04}-{month:02}-{day:02}"),
+            (Some(month), None) => format!("{year:04}-{month:02}"),
+            _ => format!("{year:04}"),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecordLabel {
+    pub name: String,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

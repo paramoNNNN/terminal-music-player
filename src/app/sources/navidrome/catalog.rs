@@ -5,12 +5,17 @@ use crate::library::track::Track;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Catalog {
+    #[serde(default)]
+    artist_credits_version: u8,
     artists: Vec<Artist>,
     albums: Vec<Album>,
     tracks: Vec<Track>,
     playlists: Vec<Playlist>,
     libraries: Vec<crate::navidrome::MusicFolder>,
+    #[serde(default)]
     extensions: std::collections::HashSet<String>,
+    #[serde(default)]
+    extensions_verified: bool,
 }
 
 /// Catalog and derived browsing data arrive together, under the same request guard.
@@ -25,19 +30,23 @@ fn read_catalog(
     legacy: Option<(crate::library::cache::Ticket, String)>,
 ) -> anyhow::Result<Option<crate::library::cache::Hit<Catalog>>> {
     let ttl = crate::library::cache::REFRESH_INTERVAL;
-    if let Some(hit) = ticket.read(ttl)? {
+    if let Some(mut hit) = ticket.read::<Catalog>(ttl)? {
+        hit.stale |= hit.value.artist_credits_version < 1;
         return Ok(Some(hit));
     }
     let Some((legacy, folder)) = legacy else {
         return Ok(None);
     };
-    let hit = legacy
+    let mut hit = legacy
         .read::<Catalog>(ttl)?
         .filter(|hit| matches!(hit.value.libraries.as_slice(), [only] if only.id == folder));
     if let Some(hit) = &hit {
         if let Err(error) = ticket.write_at(&hit.value, hit.timestamp) {
             tracing::warn!("Migrate Navidrome cache: {error}");
         }
+    }
+    if let Some(hit) = &mut hit {
+        hit.stale |= hit.value.artist_credits_version < 1;
     }
     Ok(hit)
 }
@@ -121,8 +130,8 @@ fn start(state: &mut AppState, tx: &mpsc::Sender<Event>, force: bool) {
                 match crate::app::tasks::spawn_blocking(move || {
                     read_catalog(&ticket, legacy).map(|hit| {
                         hit.map(|hit| crate::library::cache::Hit {
-                            value: hit.value.prepare(),
                             stale: hit.stale,
+                            value: hit.value.prepare(),
                             timestamp: hit.timestamp,
                         })
                     })
@@ -226,12 +235,14 @@ pub(crate) async fn fetch(session: &mut Session) -> Result<Catalog, String> {
             )
         });
         Ok(Catalog {
+            artist_credits_version: 1,
             artists: artists.into_iter().map(|a| session.artist(a)).collect(),
             albums: albums.into_iter().map(|a| session.album(a)).collect(),
             tracks: songs.into_iter().map(|t| session.track(t)).collect(),
             playlists: playlists.into_iter().map(|p| session.playlist(p)).collect(),
             libraries: session.source.libraries.clone(),
             extensions: session.extensions.clone(),
+            extensions_verified: true,
         })
     })
     .await
@@ -300,7 +311,12 @@ pub fn install(state: &mut AppState, prepared: PreparedCatalog) {
             session.source.id,
             session.client.folder.as_deref().unwrap_or("all")
         ));
-        session.extensions = catalog.extensions;
+        // A cache hit can arrive after the active connection already queried
+        // live capabilities. Never let that stale snapshot hide an extension.
+        if catalog.extensions_verified || !session.extensions_verified {
+            session.extensions = catalog.extensions;
+            session.extensions_verified = catalog.extensions_verified;
+        }
     }
     state.library.artists_total = catalog.artists.len() as u32;
     state.library.albums_total = catalog.albums.len() as u32;
@@ -313,6 +329,8 @@ pub fn install(state: &mut AppState, prepared: PreparedCatalog) {
     state.library.track_artists = artists.track_artists;
     state.library.artist_aliases = artists.aliases;
     state.library.album_display_artist = artists.album_display;
+    crate::app::handlers::dispatch_browse::refresh_label_overview(state);
+    crate::app::handlers::dispatch_browse::refresh_artist_overview(state);
     let items = state.build_artist_root_items();
     if state.sources.nav_collection.is_none() {
         state.artist_nav.update_root_items("artists", items);
@@ -382,6 +400,7 @@ mod cache_tests {
             .unwrap()
             .ticket("catalog");
         let mut catalog = Catalog {
+            artist_credits_version: 1,
             artists: vec![],
             albums: vec![],
             tracks: vec![],
@@ -391,6 +410,7 @@ mod cache_tests {
                 name: "Music Library".into(),
             }],
             extensions: Default::default(),
+            extensions_verified: false,
         };
         old.write(&catalog).unwrap();
         assert!(read_catalog(&new, Some((old.clone(), "other".into())))
@@ -415,5 +435,27 @@ mod cache_tests {
         let migrated = read_catalog(&new, None).unwrap().unwrap();
         assert!(migrated.stale);
         assert_eq!(migrated.timestamp, 123);
+    }
+    #[test]
+    fn legacy_catalog_requests_credit_refresh_but_keeps_usable_tracks() {
+        let dir = tempfile::tempdir().unwrap();
+        let ticket = crate::library::cache::Store::at(dir.path().into(), "credit-upgrade")
+            .unwrap()
+            .ticket("catalog");
+        let old: Catalog = serde_json::from_value(serde_json::json!({
+            "artists":[], "albums":[], "tracks":[{"ratingKey":"legacy-song", "originalTitle":"MGMT"}],
+            "playlists":[], "libraries":[]
+        })).unwrap();
+        ticket.write(&old).unwrap();
+        let hit = read_catalog(&ticket, None).unwrap().unwrap();
+        assert!(
+            hit.stale,
+            "a fresh timestamp cannot hide missing individual credits"
+        );
+        assert_eq!(hit.value.tracks[0].rating_key, "legacy-song");
+        let mut current = hit.value;
+        current.artist_credits_version = 1;
+        ticket.write(&current).unwrap();
+        assert!(!read_catalog(&ticket, None).unwrap().unwrap().stale);
     }
 }

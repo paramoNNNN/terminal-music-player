@@ -59,12 +59,24 @@ pub(super) fn requires_provider(action: &Action) -> bool {
         },
         Action::Browse(action) => match action {
             BrowseAction::LoadStations
+            | BrowseAction::LoadArtistCommunity { .. }
+            | BrowseAction::LoadArtistRelations { .. }
+            | BrowseAction::LoadOverviewAlbum { .. }
             | BrowseAction::LoadTagList(_)
             | BrowseAction::LoadTagAlbums { .. } => true,
-            BrowseAction::StationsLoaded { .. }
+            BrowseAction::SelectArtistTab(_)
+            | BrowseAction::ArtistRelationsLoaded { .. }
+            | BrowseAction::OpenLabels
+            | BrowseAction::OpenLabelOverview { .. }
+            | BrowseAction::OpenLabelAlbum { .. }
+            | BrowseAction::CycleArtistRanking
+            | BrowseAction::ArtistCommunityLoaded { .. }
+            | BrowseAction::StationsLoaded { .. }
+            | BrowseAction::OverviewAlbumLoaded { .. }
             | BrowseAction::TagListLoaded { .. }
             | BrowseAction::TagAlbumsLoaded { .. }
             | BrowseAction::RefreshTagView
+            | BrowseAction::OpenArtistOverview { .. }
             | BrowseAction::OpenTrackDetails
             | BrowseAction::CloseTrackDetails
             | BrowseAction::OpenInLibrary { .. } => false,

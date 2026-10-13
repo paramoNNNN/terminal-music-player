@@ -160,6 +160,7 @@ async fn navidrome_visualizers_read_the_authenticated_raw_stream_without_plex() 
         client: Client::new(&source, "fixture".into(), None).unwrap(),
         source,
         extensions: Default::default(),
+        extensions_verified: false,
     };
     let track = session.track(
         serde_json::from_value(serde_json::json!({"id":"song","title":"Song","duration":1}))

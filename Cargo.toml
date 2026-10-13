@@ -99,7 +99,15 @@ path = "src/bin/textamp_tui.rs"
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString", "NSDictionary", "NSValue", "NSDate", "NSRunLoop"] }
+
 [profile.release]
 lto = true
 strip = true
 opt-level = 3
+
+# Backport upstream Kitty/tmux chunking fix without a Ratatui major migration.
+[patch.crates-io]
+ratatui-image = { path = "vendor/ratatui-image" }

@@ -8,6 +8,7 @@
 
 use crate::app::state::{NotificationType, PlayStatus};
 use crate::ui::theme::theme;
+use crate::ui::widgets::track_list::favorite_marker;
 use crate::ui::RenderState as AppState;
 use crate::util::truncate_str;
 
@@ -210,13 +211,20 @@ fn render_tab_strip(frame: &mut Frame, state: &AppState, area: Rect) {
                             if f.is_search()))
     {
         " → results · Enter new search · : commands "
+    } else if matches!(state.view, View::Queue | View::NowPlaying) {
+        " ↑↓ list · Ctrl+U queue · Ctrl+N waveform · : commands "
     } else if state.tall_mode {
         " :  /  Tab focus  ,  \\  | "
     } else {
         " :  /  \u{21e5}  ,  \\  | "
     };
 
-    let palette_hint = format!("F7 full screen · F8 output {}", palette_hint);
+    let favorite_hint = if crate::app::sources::toggle_favorite_action(state).is_some() {
+        "F favorite · "
+    } else {
+        ""
+    };
+    let palette_hint = format!("{favorite_hint}F7 full screen · F8 output {}", palette_hint);
     let palette_hint = if state.sound_output.current != crate::audio::AudioOutput::Local {
         format!(
             "{} [{}]",
@@ -389,6 +397,8 @@ fn build_left_content(state: &AppState) -> String {
         } else {
             &track.title
         };
+        line.push_str(favorite_marker(track.favorited));
+        line.push(' ');
         line.push_str(title);
         line.push_str(" by ");
         line.push_str(track.track_artist());

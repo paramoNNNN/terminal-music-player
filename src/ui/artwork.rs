@@ -581,15 +581,21 @@ pub fn render_grid_image(frame: &mut Frame, area: Rect, key: &str, data: &[u8]) 
     }
 
     // Protocol-based rendering (Auto/Halfblocks)
-    let image_id = artwork_id(key, data);
+    // A preview and a thumbnail can show the same cover in one frame.
+    // Each size needs its own terminal image ID; resizing a shared Kitty ID
+    // replaces the pixel data underneath the other placement.
+    let mut identity = std::collections::hash_map::DefaultHasher::new();
+    artwork_id(key, data).hash(&mut identity);
+    (area.width, area.height).hash(&mut identity);
+    let image_id = identity.finish();
     let has_protocol = GRID_PROTOCOLS.with(|protos| protos.borrow().contains_key(&image_id));
 
     if !has_protocol {
         let created = GRID_PICKER.with(|picker_cell| {
             let mut picker_ref = picker_cell.borrow_mut();
-            let Some(picker) = picker_ref.as_mut() else {
-                return false;
-            };
+            // A failed terminal graphics probe must still leave a working
+            // character-based renderer (including inside terminal multiplexers).
+            let picker = picker_ref.get_or_insert_with(Picker::halfblocks);
             let Ok(img) = image::load_from_memory(data) else {
                 return false;
             };
@@ -675,4 +681,31 @@ pub fn restore_grid_native_protocol() {
 pub fn set_grid_artwork_mode(mode: ArtworkMode) {
     GRID_ARTWORK_MODE.with(|m| *m.borrow_mut() = mode);
     clear_grid_cache();
+}
+
+/// Shared small cover used by album/artist listings, including missing images.
+pub fn render_thumbnail(
+    frame: &mut Frame,
+    state: &crate::ui::RenderState,
+    area: Rect,
+    key: &str,
+    thumb: Option<&str>,
+) {
+    if area.is_empty() {
+        return;
+    }
+    let cached = state
+        .artwork
+        .grid_cache
+        .get(key)
+        .or_else(|| thumb.and_then(|thumb| state.artwork.grid_cache.get(thumb)));
+    if cached.is_some_and(|data| render_grid_image(frame, area, key, data)) {
+        return;
+    }
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new("▧")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(crate::ui::theme::theme().colors.fg_secondary)),
+        area,
+    );
 }

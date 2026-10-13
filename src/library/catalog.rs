@@ -31,10 +31,72 @@ pub struct Artist {
     pub similar: Vec<GenreTag>,
 }
 
+/// Discography sections derived from supplied release types, never guessed titles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AlbumReleaseGroup {
+    Albums,
+    Eps,
+    Singles,
+    Compilations,
+    Live,
+    Soundtracks,
+    Remixes,
+    DjMixes,
+    Other,
+    AppearsIn,
+}
+impl AlbumReleaseGroup {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Albums => "Albums",
+            Self::Eps => "EPs",
+            Self::Singles => "Singles",
+            Self::Compilations => "Compilations",
+            Self::Live => "Live",
+            Self::Soundtracks => "Soundtracks",
+            Self::Remixes => "Remixes",
+            Self::DjMixes => "DJ mixes",
+            Self::Other => "Other releases",
+            Self::AppearsIn => "Appears in",
+        }
+    }
+}
+
+/// Individual performer identity, independent of a joined display-artist string.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtistCredit {
+    #[serde(default)]
+    pub rating_key: Option<String>,
+    #[serde(default)]
+    pub name: String,
+}
+impl ArtistCredit {
+    pub fn matches(&self, artist: &Artist) -> bool {
+        self.rating_key.as_deref() == Some(&artist.rating_key)
+            || ((self.rating_key.is_none() || artist.rating_key.starts_with("track_artist:"))
+                && self.name.eq_ignore_ascii_case(&artist.title))
+    }
+}
+
 /// Album metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Album {
+    #[serde(default)]
+    pub artist_credits: Vec<ArtistCredit>,
+    #[serde(default)]
+    pub play_count: Option<u64>,
+    #[serde(default)]
+    pub release_date: Option<String>,
+    #[serde(default)]
+    pub record_labels: Vec<String>,
+    #[serde(default)]
+    pub country: Option<String>,
+    #[serde(default)]
+    pub release_types: Vec<String>,
+    #[serde(default)]
+    pub version: Option<String>,
     #[serde(default, rename = "Mood")]
     pub mood: Vec<GenreTag>,
     #[serde(default)]
@@ -71,6 +133,73 @@ pub struct Album {
 }
 
 impl Album {
+    /// Discography chronology: original release, release date, then tagged year.
+    /// Missing dates sort last; partial dates precede later dates in that year.
+    pub fn release_sort_date(&self) -> Option<(u16, u8, u8)> {
+        for value in [
+            self.originally_available_at.as_deref(),
+            self.release_date.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let mut parts = value.split('-');
+            let Some(year) = parts
+                .next()
+                .and_then(|part| part.parse::<u16>().ok())
+                .filter(|year| *year > 0)
+            else {
+                continue;
+            };
+            let month = parts
+                .next()
+                .and_then(|part| part.parse::<u8>().ok())
+                .filter(|month| (1..=12).contains(month))
+                .unwrap_or(0);
+            let day = parts
+                .next()
+                .and_then(|part| part.parse::<u8>().ok())
+                .filter(|day| (1..=31).contains(day))
+                .unwrap_or(0);
+            return Some((year, month, day));
+        }
+        self.year.filter(|year| *year > 0).map(|year| (year, 0, 0))
+    }
+
+    /// Secondary types take precedence over the primary album/single/EP type.
+    /// Untagged releases stay in Albums for compatibility with older catalogs.
+    pub fn release_group(&self) -> AlbumReleaseGroup {
+        use AlbumReleaseGroup::*;
+        let types: Vec<_> = self
+            .release_types
+            .iter()
+            .flat_map(|value| value.split([',', ';', '/']))
+            .chain(self.subtype.iter().map(String::as_str))
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect();
+        let has = |kind: &str| types.iter().any(|value| value == kind);
+        if has("live") {
+            Live
+        } else if has("soundtrack") {
+            Soundtracks
+        } else if has("remix") {
+            Remixes
+        } else if has("dj-mix") || has("dj mix") || has("djmix") {
+            DjMixes
+        } else if has("compilation") || self.is_compilation_candidate() {
+            Compilations
+        } else if has("ep") {
+            Eps
+        } else if has("single") {
+            Singles
+        } else if types.is_empty() || has("album") {
+            Albums
+        } else {
+            Other
+        }
+    }
+
     /// Get track count (leaf_count in server API).
     pub fn track_count(&self) -> u32 {
         self.leaf_count.unwrap_or(0)

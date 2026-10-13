@@ -131,6 +131,7 @@ impl Client {
                 | "unstar"
                 | "setRating"
                 | "scrobble"
+                | "reportPlayback"
                 | "savePlayQueue"
         );
         let read_only =
@@ -256,6 +257,37 @@ impl Client {
             "playlist",
         )
     }
+    /// Server-provided popularity, distinct from this user's local play counts.
+    pub async fn top_songs(&self, artist: &str, artist_id: Option<&str>) -> Result<Vec<Song>> {
+        Ok(self.top_songs_with_source(artist, artist_id).await?.0)
+    }
+    pub async fn top_songs_with_source(
+        &self,
+        artist: &str,
+        artist_id: Option<&str>,
+    ) -> Result<(Vec<Song>, Option<String>)> {
+        let mut params = self.scope();
+        params.extend([("artist", artist.to_owned()), ("count", "100".into())]);
+        if let Some(id) = artist_id {
+            params.push(("id", id.to_owned()));
+        }
+        let response = self.call("getTopSongs", &params).await?;
+        let root = response
+            .get("topSongs")
+            .context("Server omitted topSongs")?;
+        let source = root
+            .get("source")
+            .or_else(|| root.get("agent"))
+            .and_then(|value| {
+                value
+                    .as_str()
+                    .or_else(|| value.get("name").and_then(Value::as_str))
+            })
+            .filter(|name| !name.trim().is_empty())
+            .map(|name| crate::util::sanitize_display_text(name).into_owned());
+        Ok((array(root, "song")?, source))
+    }
+
     pub async fn songs(&self, query: &str) -> Result<Vec<Song>> {
         let mut params = self.scope();
         params.extend([

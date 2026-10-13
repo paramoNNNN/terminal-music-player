@@ -116,6 +116,12 @@ pub fn queue_and_play(
     if state.playback_mode == PlaybackMode::Radio {
         state.radio.clear();
     }
+    state.queue.catalog_order = Some(
+        tracks
+            .iter()
+            .map(|track| track.rating_key.clone())
+            .collect(),
+    );
     state.queue.tracks = tracks;
     state.queue.index = Some(play_idx);
     state.queue.selected.clear();

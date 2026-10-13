@@ -25,6 +25,16 @@ fn tint(color: Color, colors: &ThemeColors) -> Color {
     }
     let [r, g, b] = rgb(color);
     let intensity = (54 * r + 183 * g + 19 * b) / 256;
+    // RGB blending cannot resolve terminal defaults or its remapped palette.
+    // Quantize the themed logo into palette shades instead of making it black.
+    if colors.bg_primary == Color::Reset {
+        return match intensity {
+            0..=31 => Color::Reset,
+            32..=127 => colors.fg_muted,
+            128..=223 => colors.fg_accent,
+            _ => colors.fg_primary,
+        };
+    }
     let background = rgb(colors.bg_primary);
     let accent = rgb(colors.fg_accent);
     let blended: [u8; 3] = std::array::from_fn(|i| {

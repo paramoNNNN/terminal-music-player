@@ -313,6 +313,7 @@ async fn rescan(
                     source.canonical_folder(folder.clone()),
                 )?,
                 extensions: Default::default(),
+                extensions_verified: false,
             };
             let catalog = navidrome::catalog::fetch(&mut session)
                 .await

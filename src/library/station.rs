@@ -19,8 +19,18 @@ pub fn standard_stations(
         ("style", "Style / Genre Radio", true, Genres),
         ("decade", "Decade Radio", true, ReleaseYears),
         ("artistMix", "Artist Mix", false, RelatedArtists),
-        ("albumMix", "Album Mix", false, SonicSimilarity),
-        ("sonic", "Sonic Radio", false, SonicSimilarity),
+        (
+            "albumMix",
+            "Album Mix · Navidrome Sonic / AudioMuse",
+            false,
+            SonicSimilarity,
+        ),
+        (
+            "sonic",
+            "Sonic Radio · Navidrome Sonic / AudioMuse",
+            false,
+            SonicSimilarity,
+        ),
     ]
     .into_iter()
     .filter(|(_, _, _, feature)| capabilities.supports(*feature))

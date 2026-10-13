@@ -7,6 +7,7 @@ use crate::app::state::SimilarMode;
 use crate::services::NavigationService;
 use crate::ui::layout::centered_rect;
 use crate::ui::theme::theme;
+use crate::ui::widgets::track_list::favorite_marker;
 use crate::ui::RenderState as AppState;
 use crate::util::{format_duration, truncate_middle};
 
@@ -160,7 +161,7 @@ fn render_albums(frame: &mut Frame, state: &AppState, inner: Rect, popup_area: R
         None => NavigationService::calc_scroll_offset(selected_idx, visible_item_count, total),
     };
 
-    let max_text_width = inner.width.saturating_sub(4) as usize;
+    let max_text_width = inner.width.saturating_sub(8) as usize;
 
     let items: Vec<ListItem> = state
         .similar
@@ -206,13 +207,19 @@ fn render_albums(frame: &mut Frame, state: &AppState, inner: Rect, popup_area: R
                 let title_chars = title_display.chars().count();
                 let pad = title_width.saturating_sub(title_chars);
                 Line::from(Span::styled(
-                    format!(" {}{}{} {}", title_display, " ".repeat(pad), "", year_str),
+                    format!(
+                        "      {}{}{} {}",
+                        title_display,
+                        " ".repeat(pad),
+                        "",
+                        year_str
+                    ),
                     line1_fg,
                 ))
             } else {
-                Line::from(Span::styled(format!(" {}", title_display), line1_fg))
+                Line::from(Span::styled(format!("      {}", title_display), line1_fg))
             };
-            let line2 = Line::from(Span::styled(format!("     {}", artist_display), line2_fg));
+            let line2 = Line::from(Span::styled(format!("      {}", artist_display), line2_fg));
 
             ListItem::new(Text::from(vec![line1, line2])).style(item_bg)
         })
@@ -220,6 +227,22 @@ fn render_albums(frame: &mut Frame, state: &AppState, inner: Rect, popup_area: R
 
     let list = List::new(items);
     frame.render_widget(list, inner);
+    for (row, album) in state
+        .similar
+        .albums
+        .iter()
+        .skip(scroll_offset)
+        .take(visible_item_count)
+        .enumerate()
+    {
+        crate::ui::artwork::render_thumbnail(
+            frame,
+            state,
+            Rect::new(inner.x, inner.y + row as u16 * 2, inner.width.min(4), 2),
+            &album.rating_key,
+            album.thumb.as_deref(),
+        );
+    }
 
     // Scrollbar + position indicator
     if total > visible_item_count {
@@ -267,7 +290,7 @@ fn render_tracks(frame: &mut Frame, state: &AppState, inner: Rect, popup_area: R
         None => NavigationService::calc_scroll_offset(selected_idx, visible_item_count, total),
     };
 
-    let max_text_width = inner.width.saturating_sub(4) as usize;
+    let max_text_width = inner.width.saturating_sub(10) as usize;
 
     let items: Vec<ListItem> = state
         .similar
@@ -285,7 +308,7 @@ fn render_tracks(frame: &mut Frame, state: &AppState, inner: Rect, popup_area: R
             let dur_str = format_duration(track.duration_ms());
 
             // Line 1: title + right-aligned duration
-            let title_width = max_text_width.saturating_sub(dur_str.len() + 1);
+            let title_width = max_text_width.saturating_sub(dur_str.len() + 3);
             let title_display = truncate_middle(title, title_width);
 
             // Line 2: indented artist — album
@@ -310,10 +333,19 @@ fn render_tracks(frame: &mut Frame, state: &AppState, inner: Rect, popup_area: R
             let title_chars = title_display.chars().count();
             let pad = title_width.saturating_sub(title_chars);
             let line1 = Line::from(Span::styled(
-                format!(" {}{} {}", title_display, " ".repeat(pad), dur_str),
+                format!(
+                    "      {} {}{} {}",
+                    favorite_marker(track.favorited),
+                    title_display,
+                    " ".repeat(pad),
+                    dur_str
+                ),
                 line1_fg,
             ));
-            let line2 = Line::from(Span::styled(format!("     {}", subtitle_display), line2_fg));
+            let line2 = Line::from(Span::styled(
+                format!("      {}", subtitle_display),
+                line2_fg,
+            ));
 
             ListItem::new(Text::from(vec![line1, line2])).style(item_bg)
         })
@@ -321,6 +353,31 @@ fn render_tracks(frame: &mut Frame, state: &AppState, inner: Rect, popup_area: R
 
     let list = List::new(items);
     frame.render_widget(list, inner);
+
+    for (row, track) in state
+        .similar
+        .tracks
+        .iter()
+        .enumerate()
+        .skip(scroll_offset)
+        .take(visible_item_count)
+    {
+        let y = inner.y + ((row - scroll_offset) * rows_per_item) as u16;
+        let image_area = Rect::new(inner.x, y, 5.min(inner.width), 2.min(inner.height));
+        for key in [
+            Some(track.rating_key.as_str()),
+            track.parent_rating_key.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(data) = state.artwork.grid_cache.get(key) {
+                if crate::ui::artwork::render_grid_image(frame, image_area, key, data) {
+                    break;
+                }
+            }
+        }
+    }
 
     // Scrollbar + position indicator
     if total > visible_item_count {

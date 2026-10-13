@@ -325,6 +325,11 @@ pub enum QueueLoadIntent {
 
 #[derive(Debug, Clone)]
 pub enum QueueAction {
+    PlayCatalog {
+        tracks: Vec<Track>,
+        index: usize,
+    },
+    ConfirmCatalog(Box<crate::app::state::PendingCatalogPlayback>),
     PlayTrack(Box<Track>),
     PlayTrackFromCategory(usize),
     PlayAlbum {
@@ -503,6 +508,53 @@ pub enum SearchAction {
 
 #[derive(Debug, Clone)]
 pub enum BrowseAction {
+    SelectArtistTab(crate::app::state::ArtistOverviewTab),
+    LoadArtistRelations {
+        tab: crate::app::state::ArtistOverviewTab,
+        refresh: bool,
+    },
+    ArtistRelationsLoaded {
+        library_key: String,
+        artist_key: String,
+        request_id: u64,
+        tab: crate::app::state::ArtistOverviewTab,
+        source: String,
+        result: Result<Vec<crate::app::state::ArtistMatch>, AsyncError>,
+    },
+    OpenLabels,
+    OpenLabelOverview {
+        label: String,
+    },
+    OpenLabelAlbum {
+        album_key: String,
+    },
+    CycleArtistRanking,
+    LoadArtistCommunity {
+        refresh: bool,
+    },
+    ArtistCommunityLoaded {
+        library_key: String,
+        artist_key: String,
+        request_id: u64,
+        result: Result<Vec<crate::library::models::Track>, AsyncError>,
+    },
+    LoadOverviewAlbum {
+        album_key: String,
+    },
+    OverviewAlbumLoaded {
+        library_key: String,
+        album_key: String,
+        result: Result<
+            (
+                Box<crate::library::models::Album>,
+                Vec<crate::library::models::Track>,
+            ),
+            AsyncError,
+        >,
+    },
+    OpenArtistOverview {
+        artist_key: String,
+    },
     LoadStations,
     StationsLoaded {
         library_key: String,

@@ -7,6 +7,27 @@ use crate::ui::widgets::selectable_list::calculate_scroll_offset;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Row, Table};
 
+/// Favorite status is separate from the title so sorting and source identity stay intact.
+pub fn favorite_marker(favorited: Option<bool>) -> &'static str {
+    match favorited {
+        Some(true) => "♥",
+        Some(false) | None => "",
+    }
+}
+
+pub fn favorite_title(track: &Track) -> String {
+    let title = if track.title.is_empty() {
+        track.file_name().unwrap_or("Unknown Track")
+    } else {
+        &track.title
+    };
+    if track.favorited == Some(true) {
+        format!("♥ {title}")
+    } else {
+        title.to_owned()
+    }
+}
+
 /// Render a list of tracks as a table.
 pub fn render(
     frame: &mut Frame,
@@ -47,7 +68,7 @@ pub fn render(
 
             Row::new(vec![
                 num,
-                track.title.clone(),
+                favorite_title(track),
                 track.track_artist().to_string(),
                 format_duration(track.duration_ms()),
             ])

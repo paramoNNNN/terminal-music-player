@@ -9,8 +9,6 @@ use crate::library::models::Track;
 use anyhow::Result;
 use tokio::sync::mpsc;
 
-use super::helpers;
-
 /// Collect tracks from a column for playback (shared by Play*TrackFromMiller handlers).
 fn collect_tracks_from_column(
     col: &BrowseColumn,
@@ -20,7 +18,7 @@ fn collect_tracks_from_column(
     if single_track {
         col.tracks.get(track_index).cloned().into_iter().collect()
     } else {
-        col.tracks[track_index..].to_vec()
+        col.tracks.get(track_index..).unwrap_or_default().to_vec()
     }
 }
 
@@ -162,11 +160,11 @@ pub(crate) fn collect_all_art_to_load(
 
 /// Dispatch Miller column actions. Returns follow-up actions.
 pub async fn dispatch(
-    event_tx: &mpsc::Sender<Event>,
+    _event_tx: &mpsc::Sender<Event>,
     action: MillerAction,
     state: &mut AppState,
 
-    audio: &mut AudioPlayer,
+    _audio: &mut AudioPlayer,
 ) -> Result<Vec<Action>> {
     match action {
         // ================================================================
@@ -386,7 +384,11 @@ pub async fn dispatch(
             if let Some(col) = state.artist_nav.columns.get(column_index) {
                 let tracks = collect_tracks_from_column(col, track_index, single_track);
                 if !tracks.is_empty() {
-                    helpers::queue_and_play(event_tx, state, audio, tracks, 0);
+                    return Ok(vec![crate::app::action::QueueAction::PlayCatalog {
+                        tracks,
+                        index: 0,
+                    }
+                    .into()]);
                 }
             }
         }
@@ -476,7 +478,11 @@ pub async fn dispatch(
             if let Some(col) = state.tag_nav.columns.get(column_index) {
                 let tracks = collect_tracks_from_column(col, track_index, single_track);
                 if !tracks.is_empty() {
-                    helpers::queue_and_play(event_tx, state, audio, tracks, 0);
+                    return Ok(vec![crate::app::action::QueueAction::PlayCatalog {
+                        tracks,
+                        index: 0,
+                    }
+                    .into()]);
                 }
             }
         }
@@ -490,7 +496,11 @@ pub async fn dispatch(
             if let Some(col) = state.playlist_nav.columns.get(column_index) {
                 let tracks = collect_tracks_from_column(col, track_index, single_track);
                 if !tracks.is_empty() {
-                    helpers::queue_and_play(event_tx, state, audio, tracks, 0);
+                    return Ok(vec![crate::app::action::QueueAction::PlayCatalog {
+                        tracks,
+                        index: 0,
+                    }
+                    .into()]);
                 }
             }
         }

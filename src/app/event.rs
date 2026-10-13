@@ -137,7 +137,10 @@ impl LibraryEventSender {
         self
     }
 
-    pub(crate) async fn send(&self, event: Event) -> Result<(), mpsc::error::SendError<Event>> {
+    pub(crate) async fn send(
+        &self,
+        event: Event,
+    ) -> Result<(), Box<mpsc::error::SendError<Event>>> {
         let event = match self.radio_generation {
             Some(generation) => Event::RadioResult {
                 generation,
@@ -149,6 +152,7 @@ impl LibraryEventSender {
         self.sender
             .send(Event::for_library(self.generation, event))
             .await
+            .map_err(Box::new)
     }
 }
 

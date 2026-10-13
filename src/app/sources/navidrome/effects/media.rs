@@ -31,13 +31,8 @@ pub fn play(state: &mut AppState, audio: &mut AudioPlayer, tx: &mpsc::Sender<Eve
             track_key: Some(track.rating_key.clone()),
             ..Default::default()
         };
-        let mut params = vec![("id", song_id.clone())];
-        if state.transcode_kbps > 0 {
-            params.push(("maxBitRate", state.transcode_kbps.to_string()));
-        } else {
-            params.push(("format", "raw".into()));
-        }
-        let url = session.client.url("stream", &params)?;
+        let url = session.playback_url(song_id, state.transcode_kbps)?;
+        state.playback.stream_bitrate_limit = Some(state.transcode_kbps);
         audio.play_url_with_headers(
             url.as_str(),
             Default::default(),
@@ -47,6 +42,7 @@ pub fn play(state: &mut AppState, audio: &mut AudioPlayer, tx: &mpsc::Sender<Eve
         )?;
         state.playback.request_id = audio.playback_id();
         artwork(state, tx, &session);
+        report_playback(state, tx, &track, "playing", 0);
         let session = session.clone();
         let id = song_id.clone();
         spawn(state, tx, "now-playing", async move {
@@ -66,6 +62,42 @@ pub fn play(state: &mut AppState, audio: &mut AudioPlayer, tx: &mpsc::Sender<Eve
         state.playback.status = PlayStatus::Stopped;
         state.set_error(format!("Playback: {error:#}"));
     }
+}
+
+pub fn report_playback(
+    state: &AppState,
+    _tx: &mpsc::Sender<Event>,
+    track: &Track,
+    report_state: &'static str,
+    position_ms: u64,
+) {
+    let Some(session) = state.sources.active.navidrome().cloned() else {
+        return;
+    };
+    if !session.extensions.contains("playbackReport") {
+        return;
+    }
+    let Ok(media_id) = session.id(&track.rating_key) else {
+        return;
+    };
+    let client = session.client.clone();
+    crate::app::tasks::spawn(async move {
+        let result = client
+            .call(
+                "reportPlayback",
+                &[
+                    ("mediaId", media_id),
+                    ("mediaType", "song".into()),
+                    ("positionMs", position_ms.to_string()),
+                    ("state", report_state.into()),
+                    ("ignoreScrobble", "true".into()),
+                ],
+            )
+            .await;
+        if let Err(error) = result {
+            tracing::warn!("Navidrome playback state report: {error:#}");
+        }
+    });
 }
 
 pub fn scrobble(state: &mut AppState, tx: &mpsc::Sender<Event>, track: &Track) {
@@ -152,13 +184,17 @@ async fn cover(session: &Session, key: &str, library_key: &str) -> anyhow::Resul
     if let Some(data) =
         crate::app::tasks::spawn_blocking(move || cache.load(&cache_key, 32 * 86400)).await?
     {
-        return Ok(data);
+        if image::guess_format(&data).is_ok() {
+            return Ok(data);
+        }
     }
     let url = session.client.url(
         "getCoverArt",
         &[("id", session.id(key)?), ("size", "600".into())],
     )?;
     let data = session.client.bytes(url, 8 * 1024 * 1024).await?;
+    image::guess_format(&data)
+        .map_err(|_| anyhow::anyhow!("Server did not return a supported cover image"))?;
     let cache = crate::media::ArtworkCache::for_library(library_key);
     let cache_key = key.to_owned();
     let cached = data.clone();
@@ -174,11 +210,15 @@ pub fn art_batch(
     if state.artwork.suppress_loads {
         return;
     }
-    // One viewport batch at a time; abandoned batches must not leave pending marks.
-    state.artwork.grid_pending.clear();
+    // Do not cancel a useful in-flight batch just because the next viewport
+    // requested different covers. It will finish and the next tick will fill
+    // any remaining cache misses.
+    if state.sources.nav_tasks.contains_key("art-grid") {
+        return;
+    }
     let batch: Vec<_> = batch
         .into_iter()
-        .filter(|(k, _)| !state.artwork.grid_cache.contains_key(k))
+        .filter(|(k, _)| state.artwork.needs_grid_art(k))
         .take(100)
         .collect();
     if batch.is_empty() {
@@ -209,7 +249,10 @@ pub fn art_batch(
                             key,
                             data,
                         },
-                        Err(_) => ArtworkEvent::AlbumArtFailed { generation, key },
+                        Err(error) => {
+                            tracing::warn!("Navidrome cover request failed: {error:#}");
+                            ArtworkEvent::AlbumArtFailed { generation, key }
+                        }
                     })
                 }
             })

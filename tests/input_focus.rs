@@ -132,15 +132,13 @@ fn clicking_artwork_never_selects_or_plays_a_queue_row() {
 }
 
 #[test]
-fn clicking_visualizer_tabs_moves_keyboard_focus_out_of_queue() {
+fn clicking_compact_waveform_moves_focus_without_changing_visualization_mode() {
     let mut state = queue_state(View::Queue, true);
     render(&mut state);
-    let rect = state
-        .hit_regions
-        .now_playing_content
-        .as_ref()
-        .unwrap()
-        .visualizer_tab_area;
+    let regions = state.hit_regions.now_playing_content.as_ref().unwrap();
+    assert_eq!(regions.visualizer_tab_area.height, 0);
+    let rect = regions.visualizer_content_area;
+    let old = state.visualizer_tab;
     mouse(
         &mut state,
         MouseEventKind::Down(MouseButton::Left),
@@ -148,10 +146,13 @@ fn clicking_visualizer_tabs_moves_keyboard_focus_out_of_queue() {
         rect.y,
     );
     assert_eq!(state.view, View::NowPlaying);
-    assert!(state.visualizer_tab_focused);
-    let old = state.visualizer_tab;
-    key(&mut state, KeyCode::Right);
-    assert_ne!(state.visualizer_tab, old);
+    assert!(!state.visualizer_tab_focused);
+    let actions = key(&mut state, KeyCode::Up);
+    assert!(matches!(
+        actions.as_slice(),
+        [Action::Navigation(NavigationAction::SetView(View::Queue))]
+    ));
+    assert_eq!(state.visualizer_tab, old);
 }
 
 #[test]
@@ -240,6 +241,7 @@ async fn dispatched_tab_round_trips_all_providers_and_clears_old_filter_capture(
                         .unwrap(),
                     source,
                     extensions: Default::default(),
+                    extensions_verified: false,
                 }));
             } else if provider != "none" {
                 state.sources.active = ActiveSource::Folder(provider.into());
@@ -414,4 +416,34 @@ fn view_changes_clear_text_capture_and_selection_mode_but_redundant_focus_does_n
     assert!(state.queue.selected.contains(&1));
     state.set_view(View::Browse);
     assert!(state.queue.selected.is_empty());
+}
+
+#[test]
+fn down_stays_in_the_track_list_at_boundaries_including_radio() {
+    use textamp::app::state::PlaybackMode;
+    for tall in [false, true] {
+        for count in [0, 1, 10] {
+            for radio in [false, true] {
+                let mut state = queue_state(View::Queue, tall);
+                state.queue.tracks.truncate(count);
+                if radio {
+                    state.radio.tracks = state.queue.tracks.clone();
+                    state.queue.tracks.clear();
+                    state.set_playback_mode(PlaybackMode::Radio);
+                } else {
+                    state.set_playback_mode(PlaybackMode::Queue);
+                }
+                state.now_playing_focus = NowPlayingFocus::Tracks;
+                for expected in (1..count).chain([count.saturating_sub(1); 3]) {
+                    state.scroll.queue = Some(0);
+                    assert!(key(&mut state, KeyCode::Down).is_empty());
+                    assert_eq!(state.list_state.queue_index, expected);
+                    assert_eq!(state.view, View::Queue);
+                    assert_eq!(state.now_playing_focus, NowPlayingFocus::Tracks);
+                    assert!(!state.visualizer_tab_focused);
+                    assert_eq!(state.scroll.queue, None);
+                }
+            }
+        }
+    }
 }

@@ -13,6 +13,68 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Mutex};
 
 #[tokio::test]
+async fn artist_overview_fetches_album_tags_and_disc_order_without_server_writes() {
+    let (url, requests, task) = server(|method, params| {
+        let mut payload = fixture(method, params);
+        if method == "getAlbum" {
+            payload["album"]["recordLabels"] = json!([{"name":"Fixture Label"}]);
+            payload["album"]["releaseDate"] = json!({"year":2009,"month":9});
+            payload["album"]["coverArt"] = json!("album-cover");
+            payload["album"]["song"][0]["bitRate"] = json!(900);
+            payload["album"]["song"][0]["samplingRate"] = json!(96000);
+        }
+        (200, envelope(payload))
+    })
+    .await;
+    let session = session(url);
+    let mut app = App::new(session.clone());
+    app.catalog().await;
+    app.send(BrowseAction::OpenArtistOverview {
+        artist_key: session.key("artist"),
+    })
+    .await;
+    let actions = textamp::app::handlers::key_input::handle_key(
+        crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ),
+        &mut app.state,
+        &app.config,
+    );
+    for action in actions {
+        app.send(action).await;
+    }
+    while app.state.artist_overview.as_ref().unwrap().album_loading {
+        app.receive().await;
+    }
+    let page = app.state.artist_overview.as_ref().unwrap();
+    let album = page.selected_album.as_ref().unwrap();
+    assert_eq!(album.record_labels, ["Fixture Label"]);
+    assert_eq!(album.release_date.as_deref(), Some("2009-09"));
+    assert_eq!(
+        page.album_tracks
+            .iter()
+            .map(|track| track.title.as_str())
+            .collect::<Vec<_>>(),
+        ["Song first", "Song second", "Song disc2"]
+    );
+    assert!(page
+        .album_tracks
+        .iter()
+        .all(|track| track.parent_thumb.as_deref() == album.thumb.as_deref()));
+    assert_eq!(page.artwork().unwrap().0, session.key("album"));
+    let calls = requests.lock().await;
+    assert!(calls
+        .iter()
+        .any(|(method, params)| method == "getAlbum"
+            && params.get("id").is_some_and(|id| id == "album")));
+    assert!(!calls.iter().any(|(method, _)| method == "scrobble"
+        || method == "stream"
+        || method == "reportPlayback"));
+    task.abort();
+}
+
+#[tokio::test]
 async fn compilations_browse_from_server_and_offline_cache_and_reset_on_refresh() {
     let (url, requests, task) = server(|method, params| {
         let albums = json!([
@@ -956,6 +1018,7 @@ fn session(url: String) -> Session {
         client: Client::new(&source, "fixture-password".into(), Some("1".into())).unwrap(),
         source,
         extensions: Default::default(),
+        extensions_verified: false,
     }
 }
 fn song(id: &str, track: u32, disc: u32) -> Value {
@@ -2627,7 +2690,7 @@ async fn sole_folder_startup_migrates_aggregate_cache_without_network() {
         None::<String>,
     ))
     .unwrap();
-    old.ticket("catalog").write(&json!({"artists":[], "albums":[], "tracks":[], "playlists":[], "libraries":[{"id":"1","name":"Music"}], "extensions":[]})).unwrap();
+    old.ticket("catalog").write(&json!({"artist_credits_version":1,"artists":[], "albums":[], "tracks":[], "playlists":[], "libraries":[{"id":"1","name":"Music"}], "extensions":[]})).unwrap();
     let current = session.cache_store().unwrap();
     assert!(!old.same_scope(&current));
     let mut app = App::new(session);
@@ -2641,4 +2704,293 @@ async fn sole_folder_startup_migrates_aggregate_cache_without_network() {
         .read::<Value>(textamp::library::cache::REFRESH_INTERVAL)
         .unwrap()
         .is_some());
+}
+
+#[tokio::test]
+async fn f_toggles_server_favorite_and_preserves_status_when_the_read_fails() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let favorite = Arc::new(AtomicBool::new(false));
+    let fail = Arc::new(AtomicBool::new(false));
+    let server_favorite = favorite.clone();
+    let server_fail = fail.clone();
+    let (url, requests, task) = server(move |method, params| {
+        if method == "getSong" {
+            if server_fail.load(Ordering::SeqCst) {
+                return (500, "fixture read failure".into());
+            }
+            let mut value = song("first", 1, 1);
+            if server_favorite.load(Ordering::SeqCst) {
+                value["starred"] = json!("2026-10-13T00:00:00Z");
+            }
+            return (200, envelope(json!({"song":value})));
+        }
+        if method == "star" {
+            server_favorite.store(true, Ordering::SeqCst);
+        }
+        if method == "unstar" {
+            server_favorite.store(false, Ordering::SeqCst);
+        }
+        (200, envelope(fixture(method, params)))
+    })
+    .await;
+    let session = session(url);
+    let mut app = App::new(session.clone());
+    let track = session.track(serde_json::from_value(song("first", 1, 1)).unwrap());
+    app.state.queue.tracks = vec![track];
+    app.state.queue.index = Some(0);
+    app.state
+        .set_playback_mode(textamp::app::state::PlaybackMode::Queue);
+    app.state.view = View::NowPlaying;
+    for expected in [true, false] {
+        let actions = textamp::app::handlers::key_input::handle_key(
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
+            &mut app.state,
+            &app.config,
+        );
+        assert_eq!(actions.len(), 1);
+        for action in actions {
+            app.send(action).await;
+        }
+        while app.state.sources.nav_tasks.contains_key("metadata-write") {
+            app.receive().await;
+        }
+        assert_eq!(app.state.current_track().unwrap().favorited, Some(expected));
+        assert_eq!(favorite.load(Ordering::SeqCst), expected);
+    }
+    fail.store(true, Ordering::SeqCst);
+    let action = textamp::app::sources::toggle_favorite_action(&app.state).unwrap();
+    app.send(action).await;
+    while app.state.sources.nav_tasks.contains_key("metadata-write") {
+        app.receive().await;
+    }
+    assert_eq!(app.state.current_track().unwrap().favorited, Some(false));
+    assert!(app.state.notifications.last_error.is_some());
+    let calls = requests.lock().await;
+    assert_eq!(
+        calls.iter().filter(|(method, _)| method == "star").count(),
+        1
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(method, _)| method == "unstar")
+            .count(),
+        1
+    );
+    assert!(!calls
+        .iter()
+        .any(|(method, _)| matches!(method.as_str(), "stream" | "scrobble")));
+    task.abort();
+}
+
+#[tokio::test]
+async fn artist_community_popularity_is_scoped_cached_and_keeps_results_on_provider_failure() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use textamp::app::state::ArtistRanking;
+    let fail = Arc::new(AtomicBool::new(false));
+    let server_fail = fail.clone();
+    let (url, requests, task) = server(move |method, params| {
+        if method == "getTopSongs" {
+            if server_fail.load(Ordering::SeqCst) {
+                return (200, json!({"subsonic-response":{"status":"failed","error":{"code":0,"message":"Community provider unavailable"}}}).to_string());
+            }
+            let mut popular = song("second", 2, 1);
+            popular["playCount"] = json!(7);
+            popular["listeners"] = json!(12345);
+            popular["globalPlayCount"] = json!(45678);
+            return (200, envelope(json!({"topSongs":{"source":"Fixture.fm","song":[popular,song("outside-library",1,1),song("first",1,1)]}})));
+        }
+        if method == "getOpenSubsonicExtensions" {
+            return (200, envelope(json!({"openSubsonicExtensions":[{"name":"topSongsByArtistId","versions":[1]}]})));
+        }
+        (200, envelope(fixture(method, params)))
+    }).await;
+    let session = session(url);
+    let mut app = App::new(session.clone());
+    app.catalog().await;
+    app.send(BrowseAction::OpenArtistOverview {
+        artist_key: session.key("artist"),
+    })
+    .await;
+    app.send(BrowseAction::CycleArtistRanking).await;
+    app.send(BrowseAction::CycleArtistRanking).await;
+    while app.state.artist_overview.as_ref().unwrap().rankings.loading {
+        app.receive().await;
+    }
+    let chart = app.state.artist_overview.as_ref().unwrap();
+    assert_eq!(chart.rankings.mode, ArtistRanking::Community);
+    assert!(chart.rankings.community_source.contains("Fixture.fm"));
+    let metrics =
+        textamp::ui::screens::artist_overview::ranking_metrics(&chart.display_tracks()[0]);
+    assert!(metrics.iter().any(|metric| metric == "Your plays: 7"));
+    assert!(metrics.iter().any(|metric| metric == "listeners: 12345"));
+    assert!(metrics
+        .iter()
+        .any(|metric| metric == "globalPlayCount: 45678"));
+    assert_eq!(
+        chart
+            .display_tracks()
+            .iter()
+            .map(|track| track.title.as_str())
+            .collect::<Vec<_>>(),
+        ["Song second", "Song first"]
+    );
+    assert_eq!(chart.display_albums().len(), 1);
+    app.send(BrowseAction::LoadArtistCommunity { refresh: false })
+        .await;
+    assert!(!app.state.artist_overview.as_ref().unwrap().rankings.loading);
+    fail.store(true, Ordering::SeqCst);
+    app.send(BrowseAction::LoadArtistCommunity { refresh: true })
+        .await;
+    assert_eq!(
+        app.state
+            .artist_overview
+            .as_ref()
+            .unwrap()
+            .display_tracks()
+            .len(),
+        2
+    );
+    while app.state.artist_overview.as_ref().unwrap().rankings.loading {
+        app.receive().await;
+    }
+    let chart = app.state.artist_overview.as_ref().unwrap();
+    assert_eq!(chart.display_tracks().len(), 2);
+    assert!(chart
+        .rankings
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("getTopSongs"));
+    let calls = requests.lock().await;
+    let popularity: Vec<_> = calls
+        .iter()
+        .filter(|(method, _)| method == "getTopSongs")
+        .collect();
+    assert_eq!(
+        popularity.len(),
+        2,
+        "a fresh cache should not refetch popularity"
+    );
+    assert_eq!(popularity[0].1["artist"], "Artist");
+    assert_eq!(popularity[0].1["id"], "artist");
+    assert_eq!(popularity[0].1["musicFolderId"], "1");
+    assert!(!calls.iter().any(|(method, _)| matches!(
+        method.as_str(),
+        "scrobble" | "reportPlayback" | "stream" | "star" | "unstar"
+    )));
+    task.abort();
+}
+
+#[tokio::test]
+async fn artist_discovery_uses_page_artist_and_sonic_song_seeds_without_playback_fallback() {
+    use textamp::app::state::ArtistOverviewTab;
+    let candidate_song = || {
+        let mut track = song("candidate-song", 1, 1);
+        track["artist"] = json!("Candidate");
+        track["artistId"] = json!("candidate");
+        track["albumArtist"] = json!("Candidate");
+        track["albumId"] = json!("candidate-album");
+        track["genre"] = json!("Ambient");
+        track
+    };
+    let (url, requests, task) = server(move |method, params| {
+        let payload = match method {
+            "getArtists" => json!({"artists":{"index":[{"name":"A","artist":[{"id":"artist","name":"Artist"},{"id":"candidate","name":"Candidate"}]}]}}),
+            "search3" => json!({"searchResult3":{"song":[song("disc2",1,2),song("second",2,1),song("first",1,1),candidate_song()]}}),
+            "getOpenSubsonicExtensions" => json!({"openSubsonicExtensions":[{"name":"sonicSimilarity","versions":[1]}]}),
+            "getArtistInfo2" => json!({"artistInfo2":{"similarArtist":[{"id":"candidate","name":"Candidate"}]}}),
+            "getSonicSimilarTracks" => json!({"sonicMatch":[{"entry":candidate_song(),"similarity":0.9}]}),
+            _ => fixture(method, params),
+        };
+        (200, envelope(payload))
+    }).await;
+    let mut session = session(url);
+    session.extensions.insert("sonicSimilarity".into());
+    let mut app = App::new(session.clone());
+    app.catalog().await;
+    app.state.queue.tracks = vec![textamp::library::models::Track {
+        rating_key: session.key("playing-song"),
+        grandparent_rating_key: Some(session.key("other-artist")),
+        ..Default::default()
+    }];
+    app.state.queue.index = Some(0);
+    app.state
+        .set_playback_mode(textamp::app::state::PlaybackMode::Queue);
+    app.send(BrowseAction::OpenArtistOverview {
+        artist_key: session.key("artist"),
+    })
+    .await;
+    app.send(BrowseAction::SelectArtistTab(
+        ArtistOverviewTab::RelatedServer,
+    ))
+    .await;
+    while app
+        .state
+        .artist_overview
+        .as_ref()
+        .unwrap()
+        .rankings
+        .relations
+        .loading
+    {
+        app.receive().await;
+    }
+    let page = app.state.artist_overview.as_ref().unwrap();
+    assert_eq!(page.artist.rating_key, session.key("artist"));
+    assert_eq!(
+        page.rankings.relations.artists[0].artist.rating_key,
+        session.key("candidate")
+    );
+    app.send(BrowseAction::SelectArtistTab(
+        ArtistOverviewTab::RelatedSonic,
+    ))
+    .await;
+    while app
+        .state
+        .artist_overview
+        .as_ref()
+        .unwrap()
+        .rankings
+        .relations
+        .loading
+    {
+        app.receive().await;
+    }
+    let page = app.state.artist_overview.as_ref().unwrap();
+    assert!(
+        !page.rankings.relations.artists.is_empty(),
+        "Sonic discovery error: {:?}; available songs: {:?}",
+        page.rankings.relations.error,
+        app.state
+            .library
+            .all_tracks
+            .iter()
+            .map(|track| &track.rating_key)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        page.rankings.relations.artists[0].artist.rating_key,
+        session.key("candidate")
+    );
+    assert!(page.rankings.relations.artists[0]
+        .reason
+        .contains("seed songs"));
+    let calls = requests.lock().await;
+    assert!(calls
+        .iter()
+        .filter(|(method, _)| method == "getArtistInfo2")
+        .all(|(_, params)| params["id"] == "artist"));
+    let seeds: Vec<_> = calls
+        .iter()
+        .filter(|(method, _)| method == "getSonicSimilarTracks")
+        .map(|(_, params)| params["id"].as_str())
+        .collect();
+    assert_eq!(seeds.len(), 3);
+    assert!(seeds.iter().all(|seed| *seed != "playing-song"));
+    assert!(!calls
+        .iter()
+        .any(|(method, _)| matches!(method.as_str(), "stream" | "scrobble" | "reportPlayback")));
+    task.abort();
 }

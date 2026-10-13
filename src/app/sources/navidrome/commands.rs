@@ -11,6 +11,7 @@ pub enum Command {
     Analysis,
     Collection(CollectionKind),
     Star(bool),
+    ToggleFavorite(Box<Track>),
     Rating(u8),
     Lyrics,
     SaveQueue,
@@ -312,10 +313,40 @@ pub fn dispatch(command: Command, state: &mut AppState, tx: &mpsc::Sender<Event>
                 Ok(vec![NavAction::Text { request_id, result }.into()])
             });
         }
+        Command::ToggleFavorite(track) => {
+            let library_key = state.active_library.clone();
+            effects::spawn(state, tx, "metadata-write", async move {
+                let id = session.id(&track.rating_key)?;
+                let song = session.client.song(&id).await?;
+                let favorited = song.starred.is_none();
+                session
+                    .client
+                    .call(if favorited { "star" } else { "unstar" }, &[("id", id)])
+                    .await?;
+                Ok(vec![
+                    NavAction::FavoriteSaved {
+                        library_key,
+                        key: track.rating_key,
+                        favorited,
+                    }
+                    .into(),
+                    SystemAction::SetStatus(
+                        if favorited {
+                            "Favorite saved"
+                        } else {
+                            "Favorite removed"
+                        }
+                        .into(),
+                    )
+                    .into(),
+                ])
+            });
+        }
         Command::Star(starred) => {
             let Some((parameter, key)) = favorite_target(state) else {
                 return;
             };
+            let library_key = state.active_library.clone();
             effects::spawn(state, tx, "metadata-write", async move {
                 session
                     .client
@@ -324,15 +355,29 @@ pub fn dispatch(command: Command, state: &mut AppState, tx: &mpsc::Sender<Event>
                         &[(parameter, session.id(&key)?)],
                     )
                     .await?;
-                Ok(vec![SystemAction::SetStatus(
-                    if starred {
-                        "Favorite saved"
-                    } else {
-                        "Favorite removed"
-                    }
+                let mut actions = vec![];
+                if parameter == "id" {
+                    actions.push(
+                        NavAction::FavoriteSaved {
+                            library_key,
+                            key,
+                            favorited: starred,
+                        }
+                        .into(),
+                    );
+                }
+                actions.push(
+                    SystemAction::SetStatus(
+                        if starred {
+                            "Favorite saved"
+                        } else {
+                            "Favorite removed"
+                        }
+                        .into(),
+                    )
                     .into(),
-                )
-                .into()])
+                );
+                Ok(actions)
             });
         }
         Command::Rating(rating) => {

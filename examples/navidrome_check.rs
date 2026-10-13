@@ -358,6 +358,7 @@ async fn check_catalog(
         source,
         client,
         extensions: Default::default(),
+        extensions_verified: false,
     }));
     state.view = View::Browse;
     state.artwork.default_visible = false;

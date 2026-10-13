@@ -100,7 +100,11 @@ pub fn available_alt_commands(state: &AppState) -> Vec<AltCommand> {
 
     // Ctrl+M similar
     let related_enabled = state.sources.active.folder().is_none()
-        && (has_artist_context(state) || has_track || has_album || has_playing);
+        && (state.view == View::Related && state.artist_overview.is_some()
+            || has_artist_context(state)
+            || has_track
+            || has_album
+            || has_playing);
     let similar_enabled = related_enabled && crate::app::sources::sonic::enabled(state);
     cmds.push(AltCommand {
         modifier: CommandModifier::Ctrl,
@@ -181,6 +185,20 @@ pub fn available_alt_commands(state: &AppState) -> Vec<AltCommand> {
         label: "random album",
         display_key: None,
         enabled: state.random_album_station().is_some(),
+    });
+    cmds.push(AltCommand {
+        modifier: CommandModifier::Alt,
+        key: 'e',
+        label: "queue track",
+        display_key: None,
+        enabled: state.palette_target_track().is_some(),
+    });
+    cmds.push(AltCommand {
+        modifier: CommandModifier::Alt,
+        key: 'n',
+        label: "play next",
+        display_key: None,
+        enabled: state.palette_target_track().is_some(),
     });
 
     cmds

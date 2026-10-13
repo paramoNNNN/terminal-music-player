@@ -34,6 +34,7 @@ async fn run() -> Result<()> {
         )?,
         source,
         extensions: Default::default(),
+        extensions_verified: false,
     };
     let key = textamp::app::sources::audiomuse::key(&session);
     if args.iter().any(|arg| arg == "--sidebar") {

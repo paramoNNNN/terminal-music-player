@@ -49,10 +49,9 @@ fn handle_artwork_keys(key: event::KeyEvent, state: &mut AppState) -> Vec<Action
             vec![]
         }
         KeyCode::Down => {
-            // Drop into the visualizer below — focus the tab bar so
-            // the user can immediately pick a viz mode.
+            // Move to the compact waveform below.
             state.now_playing_focus = NowPlayingFocus::Tracks;
-            state.visualizer_tab_focused = true;
+            state.visualizer_tab_focused = false;
             vec![NavigationAction::SetView(View::NowPlaying).into()]
         }
         KeyCode::Up => {
@@ -93,11 +92,11 @@ fn handle_sidebar_keys(key: event::KeyEvent, state: &mut AppState) -> Vec<Action
         }
         KeyCode::Down => {
             // At the bottom of the sidebar (Clear Queue), Down hops
-            // straight to the visualizer below. Otherwise just
+            // to the compact waveform below. Otherwise just
             // advance to the next button.
             if state.now_playing_sidebar_index >= n - 1 {
                 state.now_playing_focus = NowPlayingFocus::Tracks;
-                state.visualizer_tab_focused = true;
+                state.visualizer_tab_focused = false;
                 return vec![NavigationAction::SetView(View::NowPlaying).into()];
             }
             state.now_playing_sidebar_index = (state.now_playing_sidebar_index + 1).min(n - 1);
@@ -117,51 +116,22 @@ fn handle_sidebar_keys(key: event::KeyEvent, state: &mut AppState) -> Vec<Action
 /// Standard arrow-key navigation: arrows always traverse the
 /// on-screen UI elements. Seeking uses the global Shift+arrow shortcuts so the
 /// arrows are free to walk between the visualizer, the visualizer
-/// tab bar, and the queue / sidebar / tracks at the top of the
+/// seekbar and the queue / sidebar / tracks at the top of the
 /// combined Now-Playing screen.
 pub(super) fn handle_now_playing_visualizer_keys(
     key: event::KeyEvent,
     state: &mut AppState,
 ) -> Vec<Action> {
-    // When visualizer tab bar is focused, arrow keys navigate tabs.
-    if state.visualizer_tab_focused {
-        match key.code {
-            KeyCode::Left => {
-                state.visualizer_tab = state.visualizer_tab.prev();
-                return vec![];
-            }
-            KeyCode::Right => {
-                state.visualizer_tab = state.visualizer_tab.next();
-                return vec![];
-            }
-            KeyCode::Up => {
-                // Tab bar → queue tracks at the top of the screen.
-                state.visualizer_tab_focused = false;
-                state.now_playing_focus = NowPlayingFocus::Tracks;
-                return vec![NavigationAction::SetView(View::Queue).into()];
-            }
-            KeyCode::Down | KeyCode::Enter => {
-                state.visualizer_tab_focused = false;
-                return vec![];
-            }
-            KeyCode::Esc => {
-                state.visualizer_tab_focused = false;
-                return vec![];
-            }
-            _ => {}
-        }
-    }
+    state.visualizer_tab_focused = false;
 
     match key.code {
         KeyCode::Esc => vec![],
         KeyCode::F(1) => vec![NavigationAction::SetView(View::Help).into()],
 
-        // Up: focus the visualizer tab bar (waveform / spectrum /
-        // spectrogram). A second Up walks onto the queue tracks at
-        // the top of the screen.
+        // Return directly from the compact waveform to the queue.
         KeyCode::Up => {
-            state.visualizer_tab_focused = true;
-            vec![]
+            state.now_playing_focus = NowPlayingFocus::Tracks;
+            vec![NavigationAction::SetView(View::Queue).into()]
         }
         // Down on the visualizer: nothing — it's the bottom-most
         // region of the screen.
@@ -242,15 +212,8 @@ fn handle_queue_track_keys(key: event::KeyEvent, state: &mut AppState) -> Vec<Ac
         KeyCode::Down => {
             state.scroll.queue = None;
             let max = get_max_index(state);
-            // Down at the bottom of the list (or in an empty queue)
-            // hops the focus over to the visualizer area below — its
-            // tab bar gets focused so the user can immediately
-            // arrow-Left/Right between waveform / spectrum /
-            // spectrogram / vectorscope.
-            if state.queue.tracks.is_empty() || state.list_state.queue_index >= max {
-                state.visualizer_tab_focused = true;
-                return vec![NavigationAction::SetView(View::NowPlaying).into()];
-            }
+            // Keep list navigation in the list, including empty and radio queues.
+            // Ctrl+N or a visualizer click explicitly moves focus below.
             state.list_state.queue_index = (state.list_state.queue_index + 1).min(max);
             vec![]
         }

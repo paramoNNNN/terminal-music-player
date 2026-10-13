@@ -53,7 +53,21 @@ pub(super) fn handle_search_keys(key: event::KeyEvent, state: &mut AppState) -> 
                     vec![]
                 }
                 SearchFocus::Results => {
-                    // Enter: navigate to the selected result in library
+                    if let Some(results) = &state.search.results {
+                        let index = state.list_state.search_item_index;
+                        let (section, selected) = if state.search.tab == SearchTab::Global {
+                            super::super::dispatch_search::resolve_global_index(results, index)
+                        } else {
+                            (state.search.tab, index)
+                        };
+                        if section == SearchTab::Tracks && results.tracks.get(selected).is_some() {
+                            return vec![QueueAction::PlayCatalog {
+                                tracks: results.tracks.clone(),
+                                index: selected,
+                            }
+                            .into()];
+                        }
+                    }
                     vec![SearchAction::SelectSearchResult.into()]
                 }
             }

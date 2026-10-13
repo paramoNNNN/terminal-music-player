@@ -265,7 +265,8 @@ pub fn handle_mouse(event: crossterm::event::MouseEvent, state: &mut AppState) -
                             if clicked_yes {
                                 use crate::app::state::ConfirmAction;
                                 return match dialog.on_confirm {
-                                    ConfirmAction::RefreshCache => {
+                                    ConfirmAction::ReplaceCatalog(request) => vec![QueueAction::ConfirmCatalog(request).into()],
+                        ConfirmAction::RefreshCache => {
                                         helpers::refresh_current_view(state)
                                     }
                                     ConfirmAction::ClearSourceCache(choice) => vec![SettingsAction::ClearSourceCache(choice).into()],
@@ -1272,7 +1273,9 @@ fn visualizer_click(column: u16, row: u16, state: &mut AppState) -> Option<Vec<A
         return None;
     }
     state.visualizer_tab_focused = false;
-    if !state.visualizer_tab.allows_canvas_seek() || state.playback.duration_ms == 0 {
+    if (tabs.height > 0 && !state.visualizer_tab.allows_canvas_seek())
+        || state.playback.duration_ms == 0
+    {
         return Some(vec![]);
     }
     state.seek_drag = Some(canvas);
@@ -2027,7 +2030,11 @@ fn handle_browse_click(click_row: u16, click_col: u16, state: &mut AppState) -> 
                 state.track_pane_focused = true;
                 state.track_pane_index = 1;
                 if let Some((tracks, index)) = state.palette_track_list() {
-                    return vec![QueueAction::PlayTracksNow(tracks[index..].to_vec()).into()];
+                    return vec![QueueAction::PlayCatalog {
+                        tracks: tracks.to_vec(),
+                        index,
+                    }
+                    .into()];
                 }
             }
             // Sonically Similar rows: first click highlights only;
@@ -2170,7 +2177,9 @@ fn handle_browse_click(click_row: u16, click_col: u16, state: &mut AppState) -> 
                         title,
                     }
                     .into(),
-                    PlayAllRow::AllTracks { .. } => QueueAction::PlayTracksNow(tracks).into(),
+                    PlayAllRow::AllTracks { .. } => {
+                        QueueAction::PlayCatalog { tracks, index: 0 }.into()
+                    }
                 };
                 return vec![action];
             }
@@ -2289,6 +2298,20 @@ fn handle_browse_click(click_row: u16, click_col: u16, state: &mut AppState) -> 
                     _ => None,
                 }
                 .is_some_and(|c| c.selected_index == item_idx);
+
+                if was_selected && state.browse_category == BrowseCategory::Library {
+                    if let Some(BrowseItem::Artist { key, .. }) = state
+                        .artist_nav
+                        .columns
+                        .get(col_idx)
+                        .and_then(|column| column.items.get(item_idx))
+                    {
+                        return vec![BrowseAction::OpenArtistOverview {
+                            artist_key: key.clone(),
+                        }
+                        .into()];
+                    }
+                }
 
                 let plan = crate::services::plan_drill(
                     state,
@@ -2823,6 +2846,137 @@ fn handle_similar_click(click_row: u16, click_col: u16, state: &mut AppState) ->
 
 /// Handle click in Related view (popup overlay).
 fn handle_related_click(click_row: u16, click_col: u16, state: &mut AppState) -> Vec<Action> {
+    if state.artist_overview.is_some() {
+        let Some(regions) = state.hit_regions.artist_overview.clone() else {
+            return vec![];
+        };
+        if !regions.outer.contains((click_col, click_row).into()) {
+            if state
+                .artist_overview
+                .as_ref()
+                .is_some_and(|page| page.selected_album.is_some())
+            {
+                return super::key_input::related::handle_related_keys(
+                    crossterm::event::KeyEvent::new(
+                        crossterm::event::KeyCode::Backspace,
+                        crossterm::event::KeyModifiers::NONE,
+                    ),
+                    state,
+                );
+            }
+            let target = state
+                .artist_overview
+                .as_ref()
+                .map_or(View::Browse, |page| page.return_view);
+            state.artist_overview = None;
+            return vec![NavigationAction::SetView(target).into()];
+        }
+        if let Some((_, tab)) = regions
+            .tabs
+            .iter()
+            .find(|(area, _)| area.contains((click_col, click_row).into()))
+        {
+            return vec![BrowseAction::SelectArtistTab(*tab).into()];
+        }
+        if regions
+            .ranking_button
+            .is_some_and(|area| area.contains((click_col, click_row).into()))
+        {
+            return vec![BrowseAction::CycleArtistRanking.into()];
+        }
+        if regions
+            .tab_button
+            .is_some_and(|area| area.contains((click_col, click_row).into()))
+        {
+            return super::key_input::related::handle_related_keys(
+                crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Tab,
+                    crossterm::event::KeyModifiers::NONE,
+                ),
+                state,
+            );
+        }
+        if regions
+            .labels_button
+            .is_some_and(|area| area.contains((click_col, click_row).into()))
+        {
+            return super::key_input::related::handle_related_keys(
+                crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Char('l'),
+                    crossterm::event::KeyModifiers::NONE,
+                ),
+                state,
+            );
+        }
+        if !regions.list.contains((click_col, click_row).into()) {
+            return vec![];
+        }
+        let Some(clicked) = regions
+            .items
+            .iter()
+            .find(|(area, _)| area.contains((click_col, click_row).into()))
+            .map(|(_, index)| *index)
+        else {
+            return vec![];
+        };
+        let Some(page) = state.artist_overview.as_mut() else {
+            return vec![];
+        };
+        let total = page.list_len();
+        if clicked >= total {
+            return vec![];
+        }
+        let already_selected = page.index == clicked;
+        page.scroll_pin = Some(regions.first_index);
+        page.index = clicked;
+        if already_selected {
+            return super::key_input::related::activate_artist_overview(state);
+        }
+        return vec![];
+    }
+    if state.label_overview.is_some() {
+        let Some(regions) = state.hit_regions.label_overview.clone() else {
+            return vec![];
+        };
+        if !regions.outer.contains((click_col, click_row).into()) {
+            return super::key_input::related::handle_related_keys(
+                crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Esc,
+                    crossterm::event::KeyModifiers::NONE,
+                ),
+                state,
+            );
+        }
+        if regions
+            .tab_button
+            .is_some_and(|area| area.contains((click_col, click_row).into()))
+        {
+            return super::key_input::related::handle_related_keys(
+                crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Tab,
+                    crossterm::event::KeyModifiers::NONE,
+                ),
+                state,
+            );
+        }
+        if !regions.list.contains((click_col, click_row).into()) {
+            return vec![];
+        }
+        let page = state.label_overview.as_mut().unwrap();
+        let clicked =
+            regions.first_index + ((click_row - regions.list.y) / regions.row_height) as usize;
+        if clicked >= page.len() {
+            return vec![];
+        }
+        let already_selected = clicked == page.index;
+        page.index = clicked;
+        page.scroll_pin = Some(regions.first_index);
+        return if already_selected {
+            super::key_input::related::activate_label_overview(state)
+        } else {
+            vec![]
+        };
+    }
     // Read registered regions (drop borrow before mutating state)
     let regions = {
         let hr = &state.hit_regions;
@@ -2854,7 +3008,7 @@ fn handle_related_click(click_row: u16, click_col: u16, state: &mut AppState) ->
 
     let inner_row = (click_row - regions.inner.y) as usize;
     let inner_height = (content_bottom - regions.inner.y) as usize;
-    let visible_item_count = inner_height; // 1 row per item
+    let visible_item_count = inner_height / regions.rows_per_item.max(1) as usize; // two rows per thumbnail item
 
     let total = helpers::navigation::related_flat_count(&state.related.groups);
     if total == 0 {
@@ -2867,7 +3021,7 @@ fn handle_related_click(click_row: u16, click_col: u16, state: &mut AppState) ->
             helpers::calc_scroll_offset(state.list_state.related_index, visible_item_count, total)
         }
     };
-    let clicked_idx = scroll_offset + inner_row;
+    let clicked_idx = scroll_offset + inner_row / regions.rows_per_item.max(1) as usize;
 
     if clicked_idx >= total {
         return vec![];
@@ -2888,6 +3042,31 @@ fn handle_related_click(click_row: u16, click_col: u16, state: &mut AppState) ->
 
 /// Handle scroll wheel events.
 fn handle_scroll(up: bool, click_row: u16, click_col: u16, state: &mut AppState) -> Vec<Action> {
+    if state.view == View::Browse {
+        if let Some(pane) = state
+            .hit_regions
+            .track_pane
+            .as_ref()
+            .filter(|pane| pane.outer.contains((click_col, click_row).into()))
+        {
+            if let Some(track) = state.pane_track() {
+                let key = track.rating_key.clone();
+                let offset = state
+                    .track_pane_scroll
+                    .as_ref()
+                    .filter(|(stored, _)| stored == &key)
+                    .map_or(0, |(_, offset)| *offset);
+                let offset = if up {
+                    offset.saturating_sub(3)
+                } else {
+                    offset.saturating_add(3).min(pane.max_scroll)
+                };
+                state.track_pane_scroll = Some((key, offset));
+                return vec![];
+            }
+        }
+    }
+
     // Coalesce rapid scroll events (normal mouse wheel can fire multiple events per tick)
     let now = std::time::Instant::now();
     if let Some(last) = state.scroll.scroll_cooldown {
@@ -2965,6 +3144,26 @@ fn handle_scroll(up: bool, click_row: u16, click_col: u16, state: &mut AppState)
             state.list_state.similar_index = new_idx;
         }
         View::Related => {
+            if let Some(page) = state.artist_overview.as_mut() {
+                let total = page.list_len();
+                let max = total.saturating_sub(1);
+                page.index = if up {
+                    page.index.saturating_sub(1)
+                } else {
+                    (page.index + 1).min(max)
+                };
+                page.scroll_pin = None;
+                return vec![];
+            }
+            if let Some(page) = state.label_overview.as_mut() {
+                page.index = if up {
+                    page.index.saturating_sub(1)
+                } else {
+                    (page.index + 1).min(page.len().saturating_sub(1))
+                };
+                page.scroll_pin = None;
+                return vec![];
+            }
             state.scroll.related = None;
             let delta: i32 = if up { -1 } else { 1 };
             let total = helpers::navigation::related_flat_count(&state.related.groups);
@@ -3992,7 +4191,7 @@ fn try_related_scrollbar_click(
     }
 
     let inner_height = sr.inner.height.saturating_sub(1) as usize; // -1 for footer
-    let visible_items = inner_height; // 1 row per item
+    let visible_items = inner_height / sr.rows_per_item.max(1) as usize; // thumbnail rows
     let scroll_offset = state.scroll.related.unwrap_or_else(|| {
         helpers::calc_scroll_offset(state.list_state.related_index, visible_items, total_items)
     });

@@ -177,10 +177,11 @@ fn overlays_and_unknown_duration_do_not_start_a_seek() {
 }
 
 #[test]
-fn spectrogram_leaves_text_and_a_blank_row_above_its_canvas_untouched() {
+fn full_screen_spectrogram_leaves_mode_bar_and_footer_untouched() {
     for (width, height) in [(40, 12), (80, 24), (120, 42)] {
         let mut state = AppState::new();
         state.view = View::NowPlaying;
+        state.fullscreen_active = true;
         state.visualizer_tab = VisualizerTab::Spectrogram;
         state.playback.duration_ms = 60_000;
         state.playback.position_ms = 30_000;
@@ -189,10 +190,7 @@ fn spectrogram_leaves_text_and_a_blank_row_above_its_canvas_untouched() {
             .draw(|frame| state.hit_regions = textamp::ui::render(frame, &state).hit_regions)
             .unwrap();
         let before = terminal.backend().buffer().clone();
-        let regions = state.hit_regions.now_playing_content.as_ref().unwrap();
-        let canvas = regions.visualizer_content_area;
-        let tabs = regions.visualizer_tab_area;
-        assert_eq!(canvas.y, tabs.bottom() + 1);
+        let canvas = Rect::new(0, 1, width, height - 2);
         state.spectrogram.data = Some(textamp::media::SpectrogramData {
             track_key: "fixture".into(),
             duration_ms: 60_000,
@@ -215,8 +213,8 @@ fn spectrogram_leaves_text_and_a_blank_row_above_its_canvas_untouched() {
                 assert_eq!(before[(x, y)], after[(x, y)], "{width}x{height} at {x},{y}");
             }
         }
-        for x in canvas.x..canvas.right() {
-            assert_eq!(after[(x, canvas.y - 1)].symbol(), " ");
+        for x in 0..width {
+            assert_eq!(before[(x, height - 1)], after[(x, height - 1)]);
         }
         if canvas.height > 1 {
             assert_eq!(after[(canvas.x, canvas.y)].symbol(), "▀");

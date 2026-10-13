@@ -9,7 +9,7 @@ use textamp::app::{
 use textamp::media::SpectrogramData;
 
 #[test]
-fn all_six_visualizers_render_identically_for_each_library_provider() {
+fn compact_waveform_renders_identically_for_each_library_provider_and_remembered_mode() {
     use textamp::app::sources::{navidrome::Session, ActiveSource};
     use textamp::navidrome::{Client, Source};
     let source = Source {
@@ -23,6 +23,7 @@ fn all_six_visualizers_render_identically_for_each_library_provider() {
         client: Client::new(&source, "fixture".into(), None).unwrap(),
         source,
         extensions: Default::default(),
+        extensions_verified: false,
     };
     for tab in VisualizerTab::ALL {
         let mut state = fixture(tab);
@@ -41,13 +42,7 @@ fn all_six_visualizers_render_identically_for_each_library_provider() {
             .as_ref()
             .unwrap()
             .visualizer_content_area;
-        let visualizer_y = state
-            .hit_regions
-            .now_playing_content
-            .as_ref()
-            .unwrap()
-            .visualizer_tab_area
-            .y;
+        let visualizer_y = expected_area.y.saturating_sub(1);
         let expected = output
             .lines()
             .skip(visualizer_y as usize)
@@ -153,6 +148,7 @@ fn render(state: &mut AppState, width: u16, height: u16) -> String {
 fn new_modes_render_with_data_without_mutating_meter_history() {
     for tab in [VisualizerTab::Landscape, VisualizerTab::Meters] {
         let mut state = fixture(tab);
+        state.fullscreen_active = true;
         let history = state.studio_meters.history.clone();
         for (w, h) in [(40, 10), (60, 24), (120, 42), (200, 60)] {
             let output = render(&mut state, w, h);
@@ -189,46 +185,88 @@ fn new_modes_render_with_data_without_mutating_meter_history() {
 }
 
 #[test]
-fn keyboard_cycles_all_six_modes_and_mouse_hits_rendered_tabs() {
+fn full_screen_cycles_modes_and_mouse_hits_rendered_tabs() {
     let mut state = fixture(VisualizerTab::Waveform);
-    state.visualizer_tab_focused = true;
-    for expected in VisualizerTab::ALL.into_iter().cycle().skip(1).take(6) {
+    state.fullscreen_active = true;
+    state.fullscreen_artwork = false;
+    for expected in (2..9).map(|value| value % 7) {
         key_input::handle_key(
             KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
             &mut state,
-            &textamp::config::Config::default(),
+            &Default::default(),
         );
-        assert_eq!(state.visualizer_tab, expected);
+        assert_eq!(textamp::app::fullscreen::mode(&state), expected);
     }
-    for view in [View::Queue, View::NowPlaying] {
-        for selected in VisualizerTab::ALL {
-            for width in [40, 60, 120] {
-                state.view = view;
-                state.visualizer_tab = selected;
-                render(&mut state, width, 42);
-                let area = state
-                    .hit_regions
-                    .now_playing_content
-                    .as_ref()
-                    .unwrap()
-                    .visualizer_tab_area;
-                let tabs = selected.visible_tabs(area.width);
-                let mut x = area.x;
-                for (tab, label) in tabs {
-                    // Restore the selected tab whose layout produced these coordinates.
-                    state.visualizer_tab = selected;
-                    mouse_input::handle_mouse(
-                        MouseEvent {
-                            kind: MouseEventKind::Down(MouseButton::Left),
-                            column: x + 1,
-                            row: area.y,
-                            modifiers: KeyModifiers::NONE,
-                        },
-                        &mut state,
-                    );
-                    assert_eq!(state.visualizer_tab, tab, "{view:?} {width} {label}");
-                    x += label.len() as u16 + 5;
+    for width in [40, 60, 120] {
+        render(&mut state, width, 42);
+        let tabs = state.hit_regions.fullscreen_modes.clone();
+        for (area, mode) in tabs {
+            mouse_input::handle_mouse(
+                MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: area.x,
+                    row: area.y,
+                    modifiers: KeyModifiers::NONE,
+                },
+                &mut state,
+            );
+            assert_eq!(textamp::app::fullscreen::mode(&state), mode);
+        }
+    }
+}
+
+#[test]
+fn now_playing_uses_a_short_tab_free_waveform_and_seek_works_after_other_full_screen_modes() {
+    use textamp::app::{action::PlaybackAction, Action};
+    for tall in [false, true] {
+        for height in [24, 42, 80] {
+            for tab in VisualizerTab::ALL {
+                let mut state = fixture(tab);
+                state.tall_mode = tall;
+                let output = render(&mut state, 120, height);
+                let regions = state.hit_regions.now_playing_content.as_ref().unwrap();
+                let canvas = regions.visualizer_content_area;
+                assert!(canvas.height <= 4);
+                assert_eq!(regions.visualizer_tab_area.height, 0);
+                assert!(
+                    state
+                        .hit_regions
+                        .queue_content
+                        .as_ref()
+                        .unwrap()
+                        .track_list_inner
+                        .height
+                        > canvas.height
+                );
+                assert!(output.contains("waveform"));
+                for mode in [
+                    "spectrogram",
+                    "vectorscope",
+                    "studio meters",
+                    "spectral landscape",
+                ] {
+                    assert!(!output.contains(mode));
                 }
+                assert_eq!(
+                    state.visualizer_tab, tab,
+                    "rendering preserves full-screen mode"
+                );
+                let actions = mouse_input::handle_mouse(
+                    MouseEvent {
+                        kind: MouseEventKind::Down(MouseButton::Left),
+                        column: canvas.right() - 1,
+                        row: canvas.y,
+                        modifiers: KeyModifiers::NONE,
+                    },
+                    &mut state,
+                );
+                assert!(
+                    matches!(
+                        actions.as_slice(),
+                        [Action::Playback(PlaybackAction::Seek(60000))]
+                    ),
+                    "{actions:?}"
+                );
             }
         }
     }
@@ -238,15 +276,11 @@ fn keyboard_cycles_all_six_modes_and_mouse_hits_rendered_tabs() {
 fn new_canvases_do_not_seek_and_missing_data_is_explicit() {
     for tab in [VisualizerTab::Landscape, VisualizerTab::Meters] {
         let mut state = fixture(tab);
+        state.fullscreen_active = true;
         for view in [View::Queue, View::NowPlaying] {
             state.view = view;
             render(&mut state, 120, 42);
-            let area = state
-                .hit_regions
-                .now_playing_content
-                .as_ref()
-                .unwrap()
-                .visualizer_content_area;
+            let area = ratatui::layout::Rect::new(0, 1, 120, 40);
             let actions = mouse_input::handle_mouse(
                 MouseEvent {
                     kind: MouseEventKind::Down(MouseButton::Left),

@@ -30,6 +30,15 @@ pub fn key(key: KeyEvent, state: &mut AppState) -> Vec<Action> {
         KeyCode::Char(c @ '1'..='7') if key.modifiers.is_empty() => {
             select(state, (c as u8 - b'1') as usize)
         }
+        KeyCode::Char('f' | 'F')
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
+        {
+            return crate::app::sources::toggle_favorite_action(state)
+                .into_iter()
+                .collect();
+        }
         KeyCode::Char(':') => crate::app::command_palette::open(state),
         KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
             crate::app::command_palette::open(state)

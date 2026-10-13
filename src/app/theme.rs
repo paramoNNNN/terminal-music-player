@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum ThemeName {
     #[default]
+    Terminal,
     SolarizedDark,
     SolarizedLight,
     Dark,
@@ -34,6 +35,7 @@ impl ThemeName {
     /// All available themes.
     pub fn all() -> &'static [ThemeName] {
         &[
+            ThemeName::Terminal,
             ThemeName::SolarizedDark,
             ThemeName::SolarizedLight,
             ThemeName::Dark,
@@ -51,6 +53,7 @@ impl ThemeName {
     /// Display name for the theme.
     pub fn display_name(&self) -> &'static str {
         match self {
+            ThemeName::Terminal => "terminal (follow colors)",
             ThemeName::Dark => "dark",
             ThemeName::SolarizedDark => "solarized dark",
             ThemeName::SolarizedLight => "solarized light",
@@ -68,6 +71,7 @@ impl ThemeName {
     /// Config string value.
     pub fn config_name(&self) -> &'static str {
         match self {
+            ThemeName::Terminal => "terminal",
             ThemeName::Dark => "dark",
             ThemeName::SolarizedDark => "solarized-dark",
             ThemeName::SolarizedLight => "solarized-light",
@@ -85,6 +89,7 @@ impl ThemeName {
     /// Parse from config string.
     pub fn from_config(s: &str) -> Self {
         match s.to_lowercase().as_str() {
+            "terminal" | "auto" | "system" => ThemeName::Terminal,
             "solarized-dark" | "solarizeddark" => ThemeName::SolarizedDark,
             "solarized-light" | "solarizedlight" => ThemeName::SolarizedLight,
             "dark" => ThemeName::Dark,
@@ -99,7 +104,7 @@ impl ThemeName {
             "norton" | "norton-commander" | "nc" | "dos" | "borland" | "retro" => ThemeName::Norton,
             "dracula" => ThemeName::Dracula,
             "nord" => ThemeName::Nord,
-            _ => ThemeName::SolarizedDark,
+            _ => ThemeName::default(),
         }
     }
 

@@ -32,6 +32,7 @@ fn nav_state(folder: Option<String>) -> (AppState, LibraryChoice) {
         client: Client::new(&source, "fixture".into(), folder).unwrap(),
         source,
         extensions: std::collections::HashSet::from(["sonicSimilarity".into()]),
+        extensions_verified: false,
     }));
     (state, choice)
 }

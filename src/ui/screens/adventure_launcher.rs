@@ -11,6 +11,7 @@ use crate::app::state::{
 use crate::services::NavigationService;
 use crate::ui::layout::centered_rect;
 use crate::ui::theme::theme;
+use crate::ui::widgets::track_list::favorite_title;
 use crate::ui::RenderState as AppState;
 
 use ratatui::prelude::*;
@@ -59,7 +60,7 @@ pub fn render(frame: &mut Frame, state: &AppState, area: Rect) {
 
     match launcher.step {
         AdventureStep::FindStartTrack | AdventureStep::FindEndTrack => {
-            render_track_finder(frame, launcher, area);
+            render_track_finder(frame, state, launcher, area);
         }
         AdventureStep::EnterTrackCount => {
             render_track_count(frame, launcher, area);
@@ -68,7 +69,12 @@ pub fn render(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// Render step 1/3: track finder with search and drill-down.
-fn render_track_finder(frame: &mut Frame, launcher: &AdventureLauncherState, area: Rect) {
+fn render_track_finder(
+    frame: &mut Frame,
+    state: &AppState,
+    launcher: &AdventureLauncherState,
+    area: Rect,
+) {
     let t = theme();
 
     let popup_area = centered_rect(50, 70, area);
@@ -91,14 +97,14 @@ fn render_track_finder(frame: &mut Frame, launcher: &AdventureLauncherState, are
 
     match &launcher.drill {
         AdventureDrillLevel::Search => {
-            render_search_level(frame, launcher, inner);
+            render_search_level(frame, state, launcher, inner);
         }
         AdventureDrillLevel::ArtistAlbums {
             artist_name,
             albums,
             ..
         } => {
-            render_artist_albums_level(frame, launcher, artist_name, albums, inner);
+            render_artist_albums_level(frame, state, launcher, artist_name, albums, inner);
         }
         AdventureDrillLevel::AlbumTracks {
             album_title,
@@ -112,7 +118,12 @@ fn render_track_finder(frame: &mut Frame, launcher: &AdventureLauncherState, are
 }
 
 /// Render the search level: tabs + search input + results.
-fn render_search_level(frame: &mut Frame, launcher: &AdventureLauncherState, area: Rect) {
+fn render_search_level(
+    frame: &mut Frame,
+    state: &AppState,
+    launcher: &AdventureLauncherState,
+    area: Rect,
+) {
     let t = theme();
 
     let chunks = ratatui::layout::Layout::default()
@@ -155,7 +166,7 @@ fn render_search_level(frame: &mut Frame, launcher: &AdventureLauncherState, are
     );
 
     // Results
-    render_search_results(frame, launcher, chunks[2]);
+    render_search_results(frame, state, launcher, chunks[2]);
 }
 
 /// Render the tab bar for adventure launcher search.
@@ -209,6 +220,7 @@ fn render_adventure_tabs(frame: &mut Frame, launcher: &AdventureLauncherState, a
 /// Render the artist albums drill level.
 fn render_artist_albums_level(
     frame: &mut Frame,
+    state: &AppState,
     launcher: &AdventureLauncherState,
     artist_name: &str,
     albums: &[crate::library::models::Album],
@@ -262,9 +274,9 @@ fn render_artist_albums_level(
         .map(|(i, album)| {
             let is_selected = is_focused && i == launcher.item_index;
             let text = if let Some(year) = album.year {
-                format!("  {} ({})", album.title, year)
+                format!("    {} ({})", album.title, year)
             } else {
-                format!("  {}", album.title)
+                format!("    {}", album.title)
             };
             let style = if is_selected {
                 Style::default()
@@ -278,6 +290,25 @@ fn render_artist_albums_level(
         .collect();
 
     frame.render_widget(List::new(items), chunks[1]);
+    for (row, album) in albums
+        .iter()
+        .skip(scroll_offset)
+        .take(visible_height)
+        .enumerate()
+    {
+        crate::ui::artwork::render_thumbnail(
+            frame,
+            state,
+            Rect::new(
+                chunks[1].x,
+                chunks[1].y + row as u16,
+                chunks[1].width.min(2),
+                1,
+            ),
+            &album.rating_key,
+            album.thumb.as_deref(),
+        );
+    }
 
     // Scrollbar for long album lists
     if albums.len() > visible_height {
@@ -357,7 +388,7 @@ fn render_album_tracks_level(
             let is_selected = is_focused && i == launcher.item_index;
             let track_num = track.index.map(|n| format!("{}. ", n)).unwrap_or_default();
             let duration = format_duration(track.duration_ms());
-            let text = format!("  {}{} [{}]", track_num, track.title, duration);
+            let text = format!("  {}{} [{}]", track_num, favorite_title(track), duration);
             let style = if is_selected {
                 Style::default()
                     .fg(t.colors.selection_text)
@@ -415,7 +446,12 @@ fn render_search_input(frame: &mut Frame, query: &str, is_focused: bool, area: R
 }
 
 /// Render search results (tab-aware: Global shows all with headers, other tabs show per-category).
-fn render_search_results(frame: &mut Frame, launcher: &AdventureLauncherState, area: Rect) {
+fn render_search_results(
+    frame: &mut Frame,
+    state: &AppState,
+    launcher: &AdventureLauncherState,
+    area: Rect,
+) {
     let t = theme();
 
     let results = match &launcher.results {
@@ -482,9 +518,9 @@ fn render_search_results(frame: &mut Frame, launcher: &AdventureLauncherState, a
                 for a in &results.albums {
                     let artist = a.artist_name();
                     let text = if let Some(year) = a.year {
-                        format!("  {} ({}) - {}", a.title, year, artist)
+                        format!("    {} ({}) - {}", a.title, year, artist)
                     } else {
-                        format!("  {} - {}", a.title, artist)
+                        format!("    {} - {}", a.title, artist)
                     };
                     entries.push((text, false, Some(global_idx)));
                     global_idx += 1;
@@ -498,7 +534,7 @@ fn render_search_results(frame: &mut Frame, launcher: &AdventureLauncherState, a
                 ));
                 for tr in &results.tracks {
                     entries.push((
-                        format!("  {} - {}", tr.title, tr.track_artist()),
+                        format!("  {} - {}", favorite_title(tr), tr.track_artist()),
                         false,
                         Some(global_idx),
                     ));
@@ -541,6 +577,25 @@ fn render_search_results(frame: &mut Frame, launcher: &AdventureLauncherState, a
                 .collect();
 
             frame.render_widget(List::new(items), area);
+            for (row, (_, _, selected)) in entries
+                .iter()
+                .skip(scroll_offset)
+                .take(visible_height)
+                .enumerate()
+            {
+                if let Some(album) = selected
+                    .and_then(|index| index.checked_sub(results.artists.len()))
+                    .and_then(|index| results.albums.get(index))
+                {
+                    crate::ui::artwork::render_thumbnail(
+                        frame,
+                        state,
+                        Rect::new(area.x, area.y + row as u16, area.width.min(2), 1),
+                        &album.rating_key,
+                        album.thumb.as_deref(),
+                    );
+                }
+            }
 
             // Scrollbar for long lists
             if entries.len() > visible_height {
@@ -571,9 +626,9 @@ fn render_search_results(frame: &mut Frame, launcher: &AdventureLauncherState, a
                 |a| {
                     let artist = a.artist_name();
                     if let Some(year) = a.year {
-                        format!("{} ({}) - {}", a.title, year, artist)
+                        format!("    {} ({}) - {}", a.title, year, artist)
                     } else {
-                        format!("{} - {}", a.title, artist)
+                        format!("    {} - {}", a.title, artist)
                     }
                 },
                 selected_idx,
@@ -581,12 +636,34 @@ fn render_search_results(frame: &mut Frame, launcher: &AdventureLauncherState, a
                 launcher.scroll_pin,
                 area,
             );
+            let first = launcher.scroll_pin.unwrap_or_else(|| {
+                NavigationService::calc_scroll_offset(
+                    selected_idx,
+                    visible_height,
+                    results.albums.len(),
+                )
+            });
+            for (row, album) in results
+                .albums
+                .iter()
+                .skip(first)
+                .take(visible_height)
+                .enumerate()
+            {
+                crate::ui::artwork::render_thumbnail(
+                    frame,
+                    state,
+                    Rect::new(area.x, area.y + row as u16, area.width.min(2), 1),
+                    &album.rating_key,
+                    album.thumb.as_deref(),
+                );
+            }
         }
         SearchTab::Tracks => {
             render_simple_list(
                 frame,
                 &results.tracks,
-                |tr| format!("{} - {}", tr.title, tr.track_artist()),
+                |tr| format!("{} - {}", favorite_title(tr), tr.track_artist()),
                 selected_idx,
                 is_focused,
                 launcher.scroll_pin,
@@ -706,7 +783,11 @@ fn render_track_count(frame: &mut Frame, launcher: &AdventureLauncherState, area
 
     // Start track info
     let start_info = if let Some(ref track) = launcher.start_track {
-        format!("Start: {} — {}", track.title, track.track_artist())
+        format!(
+            "Start: {} — {}",
+            favorite_title(track),
+            track.track_artist()
+        )
     } else {
         "Start: (none)".to_string()
     };

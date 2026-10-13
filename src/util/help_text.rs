@@ -25,6 +25,8 @@ NAVIGATE
   ↑↓ ←→          Move / drill in / drill out
   Enter          Drill into selection (or open track-details pane)
   Backspace      Drill out
+  Artist page    Enter/Right on artist opens overview; Tab/Shift+Tab cycles visible tabs
+                 Enter opens album; Enter on song replaces queue in viewing order and opens Now Playing
   PgUp/Dn  Home/End   Big jumps
   A–Z            Jump to first item starting with that letter (shift+letter to first item with that as second letter)
 
@@ -35,6 +37,26 @@ PLAY-ALBUM ROW  (tracks columns)
   first track; ↑ from the first track jumps back to the play row.
   Click the row to play; click an item below to select it.
   Track details: Play Track plays one; Play Track++ plays it and following tracks.
+  Scroll track metadata with the wheel, or PgUp/PgDn while the pane has focus.
+  `:` / right-click → Go to Artist Page opens albums and songs for the selection.
+  F toggles favorite for the selected song (playing song in Now Playing).
+  Now Playing shows source bit rate, requested transcoding and favorite status.
+  Track lists/pickers show ♥ only for favorited songs.
+  `:` / right-click → Browse Record Labels or Go to Label opens albums/artists.
+  Label pages: Tab albums/artists, Enter opens, Esc backs out; mouse supported.
+  Artist tabs: 1–8 or Tab/Shift+Tab; Albums, Songs, Top albums, Top plays,
+  Top server, Tags, Sonic, Related. Click tabs; R related, Ctrl+M Sonic.
+  Albums group tagged release types: albums, EPs, singles, compilations, live, etc.
+  Releases sort newest to oldest within sections; missing dates come last.
+  Appears in includes individual guest credits on other artists’ releases.
+  A loading indicator stays visible while releases/guest credits refresh.
+  Section headers are not selectable; Top albums keeps play-count order.
+  Discovery uses the viewed artist. Tags compares cached genres.
+  Top plays uses your counts; missing album counts sum cached song plays.
+  Top server shows the reported source and available metrics; F5 refreshes.
+  Catalog Enter replaces queue in viewing order; edited queues ask first (No).
+  Queue Up/Down stays in the list; Ctrl+N waveform, Ctrl+U queue.
+  macOS Now Playing controls support play/pause, previous/next, stop and seek.
 
 VIEWS  (Ctrl+key)
   L  Library     G  Genres        O  Folders
@@ -57,12 +79,15 @@ VISUALIZERS (Queue / Now Playing)
   Waveform / Spectrum / Spectrogram / Vectorscope / Landscape / Meters
   Landscape shows a 12-second spectral trail. Meters use local, pre-volume
   PCM: RMS, sample peaks, peak holds, correlation (not LUFS or true peak).
+  Now Playing keeps a compact waveform below the list; F7 opens visualizers.
   Click / drag waveform or transport scrubber to seek; streams may rebuffer.
   Landscape / Meters canvases do not seek. Pause holds the meter display.
 
 QUEUE
   Ctrl+E         Add selection to end of queue
   Ctrl+Shift+E   Insert next (after current track)
+  Alt+E          Add only the selected track to the end
+  Alt+N          Add only the selected track next
   Del            Remove from queue
   Shift+↑↓       Reorder selected
   Ctrl+S         Save active queue / station as playlist (Subsonic / Navidrome)
@@ -117,6 +142,7 @@ TOOLS
   random mix, saved playback queues and playlist rename/replace/delete.
   Search… sits above browse: highlight for the logo, Enter for the Ctrl+F search popup.
   Settings → Textamp → Themes: highlight previews the ANSI art; Enter applies.
+  Terminal theme follows terminal foreground/background and its ANSI color palette.
   Settings → Textamp → Display: artwork rendering and new-column covers are per library.
   Local/WebDAV search: current-folder audio filenames; / also filters directory names.
   browse includes Navidrome system lists; audiomuse and playlists have separate headings.

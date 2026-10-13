@@ -1,5 +1,6 @@
 //! Root UI rendering (musikcube-style).
 //!
+//! Artist overviews group releases by type, then newest release date, including guest credits.
 //! F7 replaces the panes with a full-screen visualizer/artwork canvas; Esc restores them.
 //! Layout:
 //! ┌──────────────────────────────────────────────────────────────┐
@@ -22,6 +23,7 @@
 //! The untitled sidebar starts with Search, followed by lowercase group headings.
 //! Highlighting Search shows a themed logo and Enter prompt.
 
+use crate::ui::widgets::track_list::{favorite_marker, favorite_title};
 use std::cell::{Cell, RefCell};
 
 use super::artwork::ArtworkRenderer;
@@ -95,10 +97,15 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     // Clear hit-test registry for this frame
     state.hit_regions.borrow_mut().clear();
 
-    // Fill entire background with theme color
+    // Reset colors deliberately inherit terminal defaults in the terminal theme,
+    // including the terminal's background transparency.
     let t = theme();
     frame.render_widget(
-        Block::default().style(Style::default().bg(t.colors.bg_primary)),
+        Block::default().style(
+            Style::default()
+                .fg(t.colors.fg_primary)
+                .bg(t.colors.bg_primary),
+        ),
         frame.area(),
     );
 
@@ -314,14 +321,8 @@ fn render_browse_in(frame: &mut Frame, state: &AppState, area: Rect, skip_transp
         1 + content_focused.saturating_sub(column_offset_for_focus)
     };
 
-    // Equal-width column layout. Every visible miller-related
-    // column (cat col + each meaningful content miller col) gets
-    // the same width: 2 cols → 50/50, 3 → 1/3 each, 4 → quarters,
-    // etc. Strip + pane stay as fixed-width chrome that doesn't
-    // count toward the column slots. When cols would shrink below
-    // MIN_COL_WIDTH the window slides right (focus-anchored),
-    // shedding the leftmost slots.
-    const MIN_COL_WIDTH: u16 = 18;
+    // Keep browsing to two visible panes. The focused item and its children
+    // occupy the screen together; older navigation columns remain behind Back.
 
     let t = theme();
     let category_rows = state.category_rows();
@@ -331,38 +332,23 @@ fn render_browse_in(frame: &mut Frame, state: &AppState, area: Rect, skip_transp
             category_rows.get(state.category_column_index),
             Some(crate::app::state::CategoryRow::Search)
         );
-    let n_meaningful_miller = if search_selected {
-        1
-    } else {
-        count_meaningful_miller_cols(state)
-    };
-
     // Track-details pane: counted as a "column slot" so it gets
     // the same width as everything else. Visible whenever the
     // focused Miller row is a Track AND the pane hasn't been
     // hidden via Ctrl+W for that specific track.
-    let pane_track = if search_selected {
-        None
-    } else {
-        state.pane_track()
-    };
+    let pane_track =
+        if search_selected || state.category_column_focused || state.alphabet_strip_focused {
+            None
+        } else {
+            state.pane_track()
+        };
     let n_pane: usize = if pane_track.is_some() { 1 } else { 0 };
 
-    let total_cols_wanted = 1 + n_meaningful_miller + n_pane;
-
-    // Cat col is ALWAYS pinned to the left — minimum 2-col layout
-    // (cat + at least one content col) is the rule. When more miller
-    // cols + pane exist than fit, the LEFTMOST miller cols slide off
-    // (focus-anchored) while the cat stays put. Total wanted slots
-    // is at least 2 so even an empty / loading content area still
-    // reserves a meaningful col next to cat.
     let strip_wants_to_show = !search_selected && state.alphabet_strip_visible();
-    let cat_col_visible = true;
-    let resolve_layout = |strip_w: u16| -> usize {
-        let usable = full_area.width.saturating_sub(strip_w);
-        let max_fit = ((usable / MIN_COL_WIDTH) as usize).max(2);
-        total_cols_wanted.max(2).min(max_fit)
-    };
+    // With two slots, retain the sections column only at the root. Otherwise
+    // sections + track details would consume both slots and hide the focused list.
+    let cat_col_visible = state.category_column_focused || (content_focused == 0 && n_pane == 0);
+    let resolve_layout = |_strip_w: u16| -> usize { 2 };
 
     // Niri-style scroll layout: sections col, every Miller col of
     // the active browse category, and the track pane all live in
@@ -458,7 +444,11 @@ fn render_browse_in(frame: &mut Frame, state: &AppState, area: Rect, skip_transp
     // and disappears when ribbon_start > 0. Suppress its render in
     // that case; the rest of the layout (Miller area, pane, strip)
     // shifts left to claim its slot.
-    let cat_col_renders = cat_col_visible && (!scrolling_browse || scroll_sections_visible);
+    let cat_col_renders = if scrolling_browse {
+        scroll_sections_visible
+    } else {
+        cat_col_visible
+    };
 
     // Render the category column if visible
     if cat_col_renders {
@@ -702,8 +692,8 @@ fn render_browse_in(frame: &mut Frame, state: &AppState, area: Rect, skip_transp
 
     // Pass content area to existing category renderers.
     // They compute their own internal column layout from the given area.
-    // When category column is visible, they get 2/3 of the width (2 content column slots).
-    // When it's scrolled off, they get full width (3 content column slots).
+    // The focused list always gets at least one of the two slots. The other
+    // slot holds its parent, the sections menu at the root, or track details.
 
     // When category column is focused, anchor the inner content viewport to
     // column 0 so the root column (e.g. Artists) is always visible next to the
@@ -826,11 +816,11 @@ fn render_browse_in(frame: &mut Frame, state: &AppState, area: Rect, skip_transp
 }
 
 /// Combined Queue / Now Playing — matches the GUI's layout where the
-/// queue list and the visualizer share one screen. Top half is the
+/// queue list and waveform share one screen. The main area is the
 /// existing queue-mode renderer (artwork + stations + track list);
-/// bottom half holds waveform, spectrum, spectrogram, vectorscope,
-/// landscape, or studio meters. View::Queue and View::NowPlaying both render this
-/// same screen so users don't have to flip between two screens to
+/// bottom strip holds a compact waveform seekbar. View::Queue and View::NowPlaying both render this
+/// same screen. Queue arrows stay within the list; Ctrl+N focuses the visualizer.
+/// Users do not have to flip between two screens to
 /// see what's playing AND what's coming up.
 fn render_queue_and_visualizer(frame: &mut Frame, state: &AppState) {
     render_queue_and_visualizer_in(frame, state, frame.area(), false);
@@ -849,20 +839,41 @@ fn render_queue_and_visualizer_in(
     } else {
         FullScreenLayout::new(area_param)
     };
-    let area = layout.content;
+    let mut area = layout.content;
+    // Keep the playing song's quality and favorite state visible above the
+    // queue in both Queue/Now Playing and the Library split layout.
+    if let Some((quality, favorite)) = screens::now_playing::playback_details(state) {
+        let details = Rect::new(area.x, area.y, area.width, area.height.min(2));
+        let t = theme();
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled(
+                    format!(" {quality}"),
+                    Style::default().fg(t.colors.fg_secondary),
+                ),
+                Line::styled(
+                    format!(" {favorite}"),
+                    Style::default().fg(t.colors.fg_accent),
+                ),
+            ]),
+            details,
+        );
+        area.y += details.height;
+        area.height = area.height.saturating_sub(details.height);
+    }
 
-    // 50/50 vertical split: queue/sidebar/artwork on top, visualizer
-    // on the bottom. The artwork inside the top section is sized so
-    // its box is square in pixels (width = 2 × height in cells) —
-    // and `render_artwork` uses `Resize::Crop` so the cover image
-    // fills the box even if the cell aspect doesn't quite match.
+    // Keep most vertical space for the queue. The waveform is a compact strip
+    // (at most six rows including borders), including in Library split mode.
+    let waveform_height = (area.height / 5)
+        .clamp(3, 6)
+        .min(area.height.saturating_sub(4));
     let split = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([Constraint::Min(0), Constraint::Length(waveform_height)])
         .split(area);
 
     screens::now_playing::render_queue_mode(frame, state, split[0]);
-    screens::now_playing::render_visualizer_panel(frame, state, split[1]);
+    screens::now_playing::render_compact_waveform(frame, state, split[1]);
     if !skip_transport {
         render_transport(frame, state, layout.transport);
     }
@@ -891,6 +902,14 @@ fn render_similar(frame: &mut Frame, state: &AppState) {
 }
 
 fn render_related(frame: &mut Frame, state: &AppState) {
+    if state.artist_overview.is_some() {
+        screens::artist_overview::render(frame, state, frame.area());
+        return;
+    }
+    if state.label_overview.is_some() {
+        screens::label_overview::render(frame, state, frame.area());
+        return;
+    }
     // Render the previous view behind the popup
     let prev = state.previous_view.unwrap_or(View::Browse);
     match prev {
@@ -986,7 +1005,7 @@ fn render_folder_view(
             let max_vis = (area.width / fixed_w).max(1) as usize;
             (max_vis, fixed_w)
         } else {
-            let max_vis = 3.min(effective_columns).max(2);
+            let max_vis = 2;
             (max_vis, area.width / max_vis as u16)
         };
 
@@ -1216,8 +1235,22 @@ fn render_folder_view(
                                 FolderItemType::Track => "  ",
                             };
 
-                            // Use middle truncation for long titles
-                            let display_title = truncate_middle(&item.title, max_text_width);
+                            let (prefix, title_width) = if item.is_track() {
+                                let favorited = state
+                                    .library
+                                    .all_tracks
+                                    .iter()
+                                    .find(|track| track.rating_key == item.key)
+                                    .and_then(|track| track.favorited);
+                                (
+                                    format!("{prefix}{} ", favorite_marker(favorited)),
+                                    max_text_width.saturating_sub(2),
+                                )
+                            } else {
+                                (prefix.to_owned(), max_text_width)
+                            };
+                            // Keep the heart visible when long folder track titles truncate.
+                            let display_title = truncate_middle(&item.title, title_width);
 
                             let style = if is_now_playing {
                                 Style::default()
@@ -1385,50 +1418,6 @@ pub(crate) fn compute_art_grid_row(inner_width: u16, inner_height: u16) -> (u16,
 /// returns 1 so the layout reserves a slot for the animated
 /// "Loading..." placeholder. Without this, the equal-width math
 /// would slide the cat col off and leave just an empty placeholder.
-fn count_meaningful_miller_cols(state: &AppState) -> usize {
-    use crate::app::state::BrowseCategory;
-
-    // Folders have their own state shape — count `folder_state.columns`
-    // so the equal-width layout includes them as miller slots and the
-    // cat col stays anchored to the left.
-    if state.browse_category == BrowseCategory::Folders {
-        let Some(fs) = state.folder_state.as_ref() else {
-            return 1;
-        };
-        if fs.loading || fs.columns.is_empty() {
-            return 1;
-        }
-        let last_meaningful = (0..fs.columns.len())
-            .rev()
-            .find(|&i| !fs.columns[i].items.is_empty() || i <= fs.focused_column)
-            .unwrap_or(0);
-        return last_meaningful + 1;
-    }
-
-    let column_offset = match state.browse_category {
-        BrowseCategory::Playlists => 1,
-        _ => 0,
-    };
-    let Some(nav) = state.browse_nav() else {
-        return 0;
-    };
-    let num_columns = nav.columns.len();
-    if num_columns <= column_offset {
-        return if nav.loading { 1 } else { 0 };
-    }
-    let last_meaningful = (column_offset..num_columns)
-        .rev()
-        .find(|&i| !nav.columns[i].items.is_empty() || i <= nav.focused_column)
-        .unwrap_or(column_offset);
-    let effective_columns = last_meaningful + 1;
-    let n = effective_columns.saturating_sub(column_offset);
-    if n == 0 && nav.loading {
-        1
-    } else {
-        n
-    }
-}
-
 /// Render the vertical alphabet jump strip.
 ///
 /// 28 letters (`%`, `0`, `a..z`) split into **4 groups of 7**:
@@ -1704,7 +1693,7 @@ fn render_track_details_pane(
     // (artwork, metadata, similar list) renders in the scrollable
     // region below it. This keeps the primary action one keystroke
     // away even when the user has scrolled deep into similar tracks.
-    let play_label = " ▶  Play Track ";
+    let play_label = " ▶  Play Track · F favorite ";
     let play_w = (play_label.chars().count() as u16).min(inner.width);
     let play_x = inner.x + inner.width.saturating_sub(play_w);
     let play_area = Rect {
@@ -1762,6 +1751,7 @@ fn render_track_details_pane(
         let mut hr = state.hit_regions.borrow_mut();
         hr.track_pane = Some(crate::app::presentation::TrackPaneRegions {
             outer: area,
+            max_scroll: 0,
             play_button: play_area,
             following_button: following_area,
             similar_rows: Vec::new(),
@@ -1807,7 +1797,7 @@ fn render_track_details_pane(
         Style::default()
             .fg(t.colors.fg_primary)
             .add_modifier(ratatui::style::Modifier::BOLD),
-        truncate_middle(&track.title, max_w),
+        truncate_middle(&favorite_title(track), max_w),
     ));
 
     // Track artist.
@@ -1840,29 +1830,108 @@ fn render_track_details_pane(
     // Blank spacer.
     lines.push((Style::default(), String::new()));
 
-    // Duration.
-    let dur = track.duration_ms();
-    if dur > 0 {
-        lines.push((
-            Style::default().fg(t.colors.fg_muted),
-            format!("Duration: {}", format_duration(dur)),
-        ));
+    // All available song tags and source audio properties belong to the
+    // scrollable body, so long values remain readable in narrow panes.
+    let mut details: Vec<(String, String)> = Vec::new();
+    let mut add = |label: &str, value: String| {
+        if !value.trim().is_empty() {
+            details.push((label.into(), value));
+        }
+    };
+    if track.artist_name() != track.track_artist() {
+        add("Album artist", track.artist_name().into());
     }
-
-    // Track number.
+    if track.duration_ms() > 0 {
+        add("Duration", format_duration(track.duration_ms()));
+    }
     if let Some(n) = track.index {
-        lines.push((
-            Style::default().fg(t.colors.fg_muted),
-            format!("Track #{}", n),
-        ));
+        add("Track", n.to_string());
     }
-
-    // File basename.
-    if let Some(fname) = track.file_name() {
-        lines.push((
-            Style::default().fg(t.colors.fg_muted),
-            truncate_middle(&format!("File: {}", fname), max_w),
-        ));
+    if let Some(n) = track.parent_index {
+        add("Disc", n.to_string());
+    }
+    if let Some(n) = track.view_count {
+        add("Play count", n.to_string());
+    }
+    for media in &track.media {
+        if let Some(codec) = &media.audio_codec {
+            add("Codec", codec.to_uppercase());
+        }
+        if let Some(container) = &media.container {
+            add("Container", container.to_uppercase());
+        }
+        if let Some(value) = media.bitrate {
+            add("Bit rate", format!("{value} kbps"));
+        }
+        if let Some(value) = media.bit_depth {
+            add("Bit depth", format!("{value} bit"));
+        }
+        if let Some(value) = media.sampling_rate {
+            add("Sample rate", format!("{value} Hz"));
+        }
+        if let Some(value) = media.audio_channels {
+            add("Channels", value.to_string());
+        }
+        for part in &media.part {
+            if let Some(value) = part.size {
+                add("File size", format!("{value} bytes"));
+            }
+            if let Some(value) = &part.file {
+                add("File", value.clone());
+            }
+        }
+    }
+    if let Some(album) = track.parent_rating_key.as_ref().and_then(|key| {
+        state
+            .library
+            .albums
+            .iter()
+            .find(|album| &album.rating_key == key)
+    }) {
+        if let Some(value) = &album.release_date {
+            add("Released", value.clone());
+        }
+        if let Some(value) = &album.originally_available_at {
+            add("Original release", value.clone());
+        }
+        add("Label", album.record_labels.join(", "));
+        if let Some(value) = &album.country {
+            add("Country", value.clone());
+        }
+        if let Some(value) = &album.version {
+            add("Edition", value.clone());
+        }
+        add("Release type", album.release_types.join(", "));
+        add(
+            "Album moods",
+            album
+                .mood
+                .iter()
+                .map(|tag| tag.tag.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    for (label, value) in &track.metadata_tags {
+        // Split source camelCase names into readable labels while preserving
+        // uncommon tags (MusicBrainz IDs, credits, BPM, ReplayGain, and so on).
+        let mut readable = String::new();
+        for (index, ch) in label.chars().enumerate() {
+            if ch.is_uppercase() && index > 0 {
+                readable.push(' ');
+            }
+            if index == 0 {
+                readable.extend(ch.to_uppercase());
+            } else {
+                readable.push(ch);
+            }
+        }
+        add(&readable, value.clone());
+    }
+    for (label, value) in details {
+        for row in wrap_text(&format!("{label}: {value}"), max_w) {
+            lines.push((Style::default().fg(t.colors.fg_muted), row));
+        }
     }
 
     // ── Compute virtual content layout ──────────────────────────────
@@ -1896,14 +1965,19 @@ fn render_track_details_pane(
         None
     };
     let max_scroll = content_h.saturating_sub(body_h);
-    let scroll: u16 = match selected_content_y {
-        Some(target) if target < 0_u16.saturating_add(0) => 0,
-        Some(target) if target >= body_h => {
-            let want = target.saturating_sub(body_h - 1);
-            want.min(max_scroll)
-        }
-        _ => 0,
-    };
+    let scroll: u16 = state
+        .track_pane_scroll
+        .as_ref()
+        .filter(|(key, _)| key == &track.rating_key)
+        .map(|(_, offset)| (*offset).min(max_scroll))
+        .unwrap_or_else(|| match selected_content_y {
+            Some(target) if target < 0_u16.saturating_add(0) => 0,
+            Some(target) if target >= body_h => {
+                let want = target.saturating_sub(body_h - 1);
+                want.min(max_scroll)
+            }
+            _ => 0,
+        });
 
     // Helper: convert content_y → screen_y, returning None if the row
     // is clipped (above or below the body window).
@@ -1937,10 +2011,19 @@ fn render_track_details_pane(
                 width: art_w,
                 height: art_h,
             };
-            if let Some(album_key) = track.parent_rating_key.as_deref() {
-                if let Some(data) = state.artwork.grid_cache.get(album_key) {
+            for art_key in [
+                Some(track.rating_key.as_str()),
+                track.parent_rating_key.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if let Some(data) = state.artwork.grid_cache.get(art_key) {
                     rendered_art =
-                        super::artwork::render_grid_image(frame, art_area, album_key, data);
+                        super::artwork::render_grid_image(frame, art_area, art_key, data);
+                    if rendered_art {
+                        break;
+                    }
                 }
             }
             if !rendered_art {
@@ -2047,7 +2130,11 @@ fn render_track_details_pane(
                         Some(v) => v,
                         None => continue,
                     };
-                    let label = format!("\u{2022} {} \u{2014} {}", sim.title, sim.track_artist(),);
+                    let label = format!(
+                        "\u{2022} {} \u{2014} {}",
+                        favorite_title(sim),
+                        sim.track_artist(),
+                    );
                     let truncated = truncate_middle(&label, max_w);
                     let row_focused = pane_focused && pane_idx == i + 2;
                     let style = if row_focused {
@@ -2125,6 +2212,7 @@ fn render_track_details_pane(
     let mut hr = state.hit_regions.borrow_mut();
     hr.track_pane = Some(crate::app::presentation::TrackPaneRegions {
         outer: area,
+        max_scroll,
         play_button: play_area,
         following_button: following_area,
         similar_rows,
@@ -2205,11 +2293,6 @@ fn render_browse_miller_columns(
         .unwrap_or(column_offset);
     let effective_columns = last_meaningful + 1;
     // When loading with existing columns, reserve space for a loading indicator column
-    let layout_columns = if nav.loading {
-        effective_columns + 1
-    } else {
-        effective_columns
-    };
 
     // Pick the column width.
     //
@@ -2226,7 +2309,7 @@ fn render_browse_miller_columns(
         let max_vis = (area.width / fixed_w).max(1) as usize;
         (max_vis, fixed_w)
     } else {
-        let max_vis = 3.min(layout_columns).max(2);
+        let max_vis = 2;
         (max_vis, area.width / max_vis as u16)
     };
 
@@ -2636,6 +2719,19 @@ fn render_browse_miller_columns(
                             _ if is_pinned => "  ", // No arrow for pinned items
                             _ => "▸ ", // Drillable items get arrow
                         };
+
+                        // Keep the heart fixed ahead of the scrolling title in every track column.
+                        let prefix = if let BrowseItem::Track { key, .. } = item {
+                            let favorited = col.tracks.get(orig_idx)
+                                .filter(|track| &track.rating_key == key)
+                                .or_else(|| col.tracks.iter().find(|track| &track.rating_key == key))
+                                .and_then(|track| track.favorited);
+                            format!("{prefix}{} ", favorite_marker(favorited))
+                        } else {
+                            prefix.to_owned()
+                        };
+                        let max_text_width = max_text_width.saturating_sub(
+                            if matches!(item, BrowseItem::Track { .. }) { 2 } else { 0 });
 
                         // Full text for line 1 (before truncation)
                         let full_text = match item {

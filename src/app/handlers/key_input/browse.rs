@@ -671,10 +671,30 @@ fn handle_track_pane_keys(key: event::KeyEvent, state: &mut AppState) -> Vec<Act
         KeyCode::F(1) => return vec![NavigationAction::SetView(View::Help).into()],
         KeyCode::F(2) => return vec![SettingsAction::OpenSettings.into()],
 
+        KeyCode::PageUp | KeyCode::PageDown => {
+            let offset = state
+                .track_pane_scroll
+                .as_ref()
+                .filter(|(key, _)| key == &track.rating_key)
+                .map_or(0, |(_, offset)| *offset);
+            let max = state
+                .hit_regions
+                .track_pane
+                .as_ref()
+                .map_or(0, |pane| pane.max_scroll);
+            let offset = if key.code == KeyCode::PageUp {
+                offset.saturating_sub(8)
+            } else {
+                offset.saturating_add(8).min(max)
+            };
+            state.track_pane_scroll = Some((track.rating_key.clone(), offset));
+        }
         KeyCode::Up => {
+            state.track_pane_scroll = None;
             state.track_pane_index = state.track_pane_index.saturating_sub(1);
         }
         KeyCode::Down => {
+            state.track_pane_scroll = None;
             state.track_pane_index = (state.track_pane_index + 1).min(max_idx);
         }
         KeyCode::Home => state.track_pane_index = 0,
@@ -686,7 +706,11 @@ fn handle_track_pane_keys(key: event::KeyEvent, state: &mut AppState) -> Vec<Act
             }
             if state.track_pane_index == 1 {
                 if let Some((tracks, index)) = state.palette_track_list() {
-                    return vec![QueueAction::PlayTracksNow(tracks[index..].to_vec()).into()];
+                    return vec![QueueAction::PlayCatalog {
+                        tracks: tracks.to_vec(),
+                        index,
+                    }
+                    .into()];
                 }
                 return vec![];
             }
@@ -972,6 +996,14 @@ pub(super) fn handle_artist_browse_keys(key: event::KeyEvent, state: &mut AppSta
 
     // Handle Enter/Right - drill down into containers; Enter plays tracks
     if matches!(key.code, KeyCode::Enter | KeyCode::Right) {
+        if let Some(crate::app::state::BrowseItem::Artist { key, .. }) =
+            state.artist_nav.selected_item()
+        {
+            return vec![BrowseAction::OpenArtistOverview {
+                artist_key: key.clone(),
+            }
+            .into()];
+        }
         let allow_radio = key.code == KeyCode::Enter;
         return drill_actions_for_focused_artist_item(state, allow_radio, false);
     }
@@ -1026,6 +1058,9 @@ pub(super) fn drill_actions_for_focused_artist_item(
         }
         .into()],
         BrowseItem::Artist { key, title, .. } => {
+            if allow_radio {
+                return vec![BrowseAction::OpenArtistOverview { artist_key: key }.into()];
+            }
             state.library.selected_artist_name = title;
             vec![MillerAction::LoadArtistAlbumsForMiller {
                 artist_key: key,
@@ -1414,7 +1449,11 @@ fn play_row_action(
             title: title.clone(),
         }
         .into(),
-        PlayAllRow::AllTracks { .. } => QueueAction::PlayTracksNow(col.tracks.clone()).into(),
+        PlayAllRow::AllTracks { .. } => QueueAction::PlayCatalog {
+            tracks: col.tracks.clone(),
+            index: 0,
+        }
+        .into(),
     }
 }
 
@@ -1737,11 +1776,11 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_drilldown_returns_load_artist_albums_for_artist() {
+    fn test_filter_drilldown_opens_artist_overview() {
         // Repro for "filter for an artist + Enter doesn't drill" bug:
         // build state matching what SelectFilteredItem produces just
         // before calling get_filter_drilldown_actions, then assert
-        // the drill returns the LoadArtistAlbumsForMiller action.
+        // the drill opens the dedicated artist overview.
         let mut state = AppState::new();
         state.browse_category = BrowseCategory::Library;
         state.list_filter.category = BrowseCategory::Library;
@@ -1773,14 +1812,10 @@ mod tests {
         let actions = get_filter_drilldown_actions(&mut state);
         assert_eq!(actions.len(), 1, "should return exactly one drill action");
         match &actions[0] {
-            Action::Miller(MillerAction::LoadArtistAlbumsForMiller {
-                artist_key,
-                replace_child,
-            }) => {
-                assert_eq!(artist_key, "2", "should drill into Ramones");
-                assert!(!replace_child, "filter drill should push, not replace");
+            Action::Browse(BrowseAction::OpenArtistOverview { artist_key }) => {
+                assert_eq!(artist_key, "2", "should open Ramones");
             }
-            other => panic!("expected LoadArtistAlbumsForMiller, got {:?}", other),
+            other => panic!("expected OpenArtistOverview, got {:?}", other),
         }
     }
 

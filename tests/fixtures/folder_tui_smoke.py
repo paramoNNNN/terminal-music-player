@@ -59,12 +59,23 @@ with tempfile.TemporaryDirectory(prefix="textamp-folder-tui-") as temporary:
         # without emitting them again. Match text independent of those gaps.
         def normalized(value):
             return re.sub(rb"\s+", b"", re.sub(rb"\x1b\[[0-9;?]*[a-zA-Z]", b"", value))
-        deadline = time.monotonic() + (50 if wikipedia else 20)
+        started = time.monotonic()
+        deadline = started + (50 if wikipedia else 20)
+        redrawn = False
         while normalized(text) not in normalized(output) and time.monotonic() < deadline:
             if select.select([master], [], [], 0.1)[0]:
                 output.extend(os.read(master, 65536))
             if process.poll() is not None:
                 break
+            if not redrawn and time.monotonic() - started > 2:
+                # A differential draw can reuse individual letters from the
+                # previous screen. Force one full frame before treating raw
+                # escape-stream text matching as a missing UI element.
+                rows, columns, xp, yp = struct.unpack("HHHH", fcntl.ioctl(slave, termios.TIOCGWINSZ, b"\0" * 8))
+                columns = 131 if columns == 130 else 130
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, xp, yp))
+                process.send_signal(signal.SIGWINCH)
+                redrawn = True
         plain = re.sub(rb"\x1b\[[0-9;?]*[a-zA-Z]", b"", output)
         diagnostic = re.sub(r"[\u2500-\u28ff]", "", plain.decode("utf-8", errors="replace"))
         assert normalized(text) in normalized(output), f"UI did not display {text!r}; exit={process.poll()}; tail={diagnostic[-6000:]!r}"
@@ -93,7 +104,7 @@ with tempfile.TemporaryDirectory(prefix="textamp-folder-tui-") as temporary:
             time.sleep(0.2)
         if browse_only:
             output.clear()
-            os.write(master, b"\x1bOQ")  # F2: unified Libraries
+            os.write(master, b",")  # Settings: comma avoids Mac brightness keys
             wait_for(b"Add library")
             wait_for(b"[Active]")
             os.write(master, b"a")

@@ -614,7 +614,9 @@ pub fn command_visible(state: &AppState, command: &super::state::PaletteCommandK
     use super::state::PaletteCommandKind::*;
     use crate::library::capabilities::Feature;
     let requirement = match command {
-        GotoLibrary | OpenInLibrary | PlayFocusedAlbum => Some(Feature::Catalog),
+        GotoLibrary | OpenInLibrary | OpenArtistPage { .. } | PlayFocusedAlbum => {
+            Some(Feature::Catalog)
+        }
         GotoGenres => Some(Feature::Genres),
         OpenRelated => Some(Feature::RelatedArtists),
         SaveQueue => Some(Feature::SavePlaylist),
@@ -663,4 +665,29 @@ pub fn reject_unsupported_action(action: &Action, state: &mut AppState) -> bool 
         state.set_status("Not available for folder libraries".into());
     }
     unsupported
+}
+
+/// Favorite applies to the visible song, with Now Playing targeting its
+/// playing song. Text input owners intercept F before this adapter is called.
+pub fn toggle_favorite_action(state: &AppState) -> Option<Action> {
+    state.sources.active.navidrome()?;
+    let track = if state.fullscreen_active || state.view == crate::app::state::View::NowPlaying {
+        state.current_track().cloned()
+    } else if state.view == crate::app::state::View::Similar
+        && state.similar.mode == crate::app::state::SimilarMode::Tracks
+    {
+        state
+            .similar
+            .tracks
+            .get(state.list_state.similar_index)
+            .cloned()
+    } else {
+        state.palette_target_track()
+    }?;
+    Some(
+        navidrome::NavAction::Command(navidrome::commands::Command::ToggleFavorite(Box::new(
+            track,
+        )))
+        .into(),
+    )
 }

@@ -131,7 +131,7 @@ impl Spectra {
         }
         let data =
             spectrogram::generate_spectrogram_from_pcm(String::new(), 0, &self.pcm, self.rate);
-        for frame in data.frames.chunks_exact(96) {
+        for frame in data.frames.as_chunks::<96>().0 {
             self.frame(frame);
         }
         self.pcm.drain(..data.frame_count * HOP);

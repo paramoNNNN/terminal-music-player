@@ -51,26 +51,37 @@ impl ArtistIndex {
             if let Some(key) = track.parent_rating_key.as_deref() {
                 album_tracks.entry(key).or_default().push(track);
             }
-            let name = track.track_artist().trim();
-            if name.is_empty() || name == "Unknown Artist" {
-                continue;
+            let credits: Vec<_> = if track.artist_credits.is_empty() {
+                vec![(track.track_artist(), None)]
+            } else {
+                track
+                    .artist_credits
+                    .iter()
+                    .map(|credit| (credit.name.as_str(), credit.rating_key.as_deref()))
+                    .collect()
+            };
+            for (name, identity) in credits {
+                let name = name.trim();
+                if name.is_empty() || name == "Unknown Artist" {
+                    continue;
+                }
+                let normalized = normalize_artist_name(name);
+                let key = identity
+                    .map(str::to_owned)
+                    .or_else(|| lookup.get(&normalized).cloned())
+                    .unwrap_or_else(|| format!("track_artist:{}", name.to_lowercase()));
+                lookup.entry(normalized).or_insert_with(|| key.clone());
+                performers.entry(key.clone()).or_insert_with(|| {
+                    by_key
+                        .get(key.as_str())
+                        .map(|a| (*a).clone())
+                        .unwrap_or_else(|| Artist {
+                            rating_key: key.clone(),
+                            title: name.to_owned(),
+                            ..Artist::default()
+                        })
+                });
             }
-            let normalized = normalize_artist_name(name);
-            let key = lookup.entry(normalized).or_insert_with(|| {
-                // A track's provider ID can refer to an album artist or the first
-                // credited performer. Never reuse it for a different name.
-                format!("track_artist:{}", name.to_lowercase())
-            });
-            performers.entry(key.clone()).or_insert_with(|| {
-                by_key
-                    .get(key.as_str())
-                    .map(|a| (*a).clone())
-                    .unwrap_or_else(|| Artist {
-                        rating_key: key.clone(),
-                        title: name.to_owned(),
-                        ..Artist::default()
-                    })
-            });
         }
         result.track_artists = performers.into_values().collect();
         result

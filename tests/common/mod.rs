@@ -14,6 +14,7 @@ pub fn navidrome_state() -> textamp::app::AppState {
         client: Client::new(&source, "fixture".into(), None).unwrap(),
         source,
         extensions: std::collections::HashSet::from(["sonicSimilarity".into()]),
+        extensions_verified: false,
     }));
     state
 }

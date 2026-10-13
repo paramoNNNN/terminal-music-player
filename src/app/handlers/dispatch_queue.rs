@@ -87,6 +87,44 @@ pub async fn dispatch(
     let mut follow_ups = vec![];
 
     match action {
+        QueueAction::PlayCatalog { tracks, index } => {
+            if tracks.get(index).is_none() {
+                return Ok(vec![]);
+            }
+            if state.queue.is_modified() {
+                state.popups.confirm_dialog = Some(crate::app::state::ConfirmDialog {
+                    title: "Replace edited queue?".into(),
+                    message: format!("Your queue has been edited. Replace its {} tracks with the {} songs in this catalog, starting at song {}?", state.queue.tracks.len(), tracks.len(), index + 1),
+                    selected_yes: false,
+                    on_confirm: crate::app::state::ConfirmAction::ReplaceCatalog(Box::new(crate::app::state::PendingCatalogPlayback {
+                        tracks, index, library_generation: state.library_generation,
+                        expected_queue: state.queue.tracks.iter().map(|track| track.rating_key.clone()).collect(),
+                    })),
+                });
+            } else {
+                helpers::queue_and_play(event_tx, state, audio, tracks, index);
+                state.set_view(View::NowPlaying);
+            }
+        }
+        QueueAction::ConfirmCatalog(request) => {
+            if request.library_generation != state.library_generation {
+                state.set_error("Library changed; select the catalog again".into());
+            } else if !state
+                .queue
+                .tracks
+                .iter()
+                .map(|track| &track.rating_key)
+                .eq(request.expected_queue.iter())
+            {
+                state.set_error(
+                    "Queue changed while confirmation was open; select the catalog again".into(),
+                );
+            } else if request.tracks.get(request.index).is_some() {
+                helpers::queue_and_play(event_tx, state, audio, request.tracks, request.index);
+                state.set_view(View::NowPlaying);
+            }
+        }
+
         QueueAction::PlayTrack(track) => {
             helpers::play_track(event_tx, *track, state, audio);
         }

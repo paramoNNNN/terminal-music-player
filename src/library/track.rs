@@ -22,6 +22,8 @@ pub enum TrackOrigin {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Track {
+    #[serde(default)]
+    pub artist_credits: Vec<super::catalog::ArtistCredit>,
     #[serde(default, deserialize_with = "from_str_or_num_opt")]
     pub view_count: Option<u64>,
     #[serde(default, deserialize_with = "from_str_or_num_opt")]
@@ -37,6 +39,12 @@ pub struct Track {
     /// All track-level genre tags, in source order.
     #[serde(default)]
     pub genres: Vec<String>,
+    /// Additional displayable source tags; absent in older metadata caches.
+    #[serde(default)]
+    pub metadata_tags: std::collections::BTreeMap<String, String>,
+    /// None means the source/cache has not supplied favorite status.
+    #[serde(default)]
+    pub favorited: Option<bool>,
     #[serde(default)]
     pub parent_title: Option<String>,
     #[serde(default)]
@@ -167,6 +175,15 @@ impl Track {
         Ok(artwork)
     }
 
+    pub fn is_credited_to(&self, artist: &super::catalog::Artist) -> bool {
+        self.artist_credits
+            .iter()
+            .any(|credit| credit.matches(artist))
+            || self.grandparent_rating_key.as_deref() == Some(&artist.rating_key)
+            || (self.artist_credits.is_empty()
+                && self.track_artist().eq_ignore_ascii_case(&artist.title))
+    }
+
     /// Get track-level artist (original_title), falling back to album artist.
     pub fn track_artist(&self) -> &str {
         match self.original_title.as_deref() {
@@ -230,6 +247,10 @@ impl Track {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Media {
+    #[serde(default)]
+    pub bit_depth: Option<u32>,
+    #[serde(default)]
+    pub sampling_rate: Option<u32>,
     #[serde(default, deserialize_with = "from_str_or_num_opt")]
     pub id: Option<u64>,
     #[serde(default, deserialize_with = "from_str_or_num_opt")]

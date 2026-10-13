@@ -1,6 +1,7 @@
 //! UI theming system with multiple theme support.
 //!
-//! Provides semantic color naming and three built-in themes:
+//! Provides semantic color naming, terminal defaults and built-in palettes:
+//! - Terminal (follows the terminal's defaults and ANSI palette)
 //! - Default (warm dark)
 //! - Solarized Dark
 //! - Solarized Light
@@ -47,6 +48,35 @@ pub struct ThemeColors {
 }
 
 impl ThemeColors {
+    /// Leave the default foreground/background to the terminal and use its
+    /// configurable ANSI palette for accents. Never snapshot colors into RGB:
+    /// changing the terminal palette should immediately update this theme.
+    pub fn terminal() -> Self {
+        Self {
+            bg_primary: Color::Reset,
+            bg_secondary: Color::Reset,
+            bg_highlight: Color::Indexed(4),
+            bg_selection: Color::Indexed(4),
+            fg_primary: Color::Reset,
+            fg_secondary: Color::Reset,
+            fg_muted: Color::Reset,
+            fg_accent: Color::Indexed(6),
+            fg_accent_dim: Color::Indexed(6),
+            border: Color::Reset,
+            border_focused: Color::Indexed(6),
+            title_focused: Color::Indexed(6),
+            error: Color::Indexed(1),
+            success: Color::Indexed(2),
+            warning: Color::Indexed(3),
+            selection_bar_bg: Color::Indexed(4),
+            selection_bar_fg: Color::Indexed(7),
+            selection_text: Color::Indexed(7),
+            transport_bg: Color::Reset,
+            shortcut_key: Color::Indexed(6),
+            shortcut_text: Color::Reset,
+        }
+    }
+
     /// Default dark theme (warm).
     pub fn dark() -> Self {
         Self {
@@ -501,6 +531,7 @@ impl ThemeColors {
     /// Get colors for a theme name.
     pub fn for_theme(theme: ThemeName) -> Self {
         match theme {
+            ThemeName::Terminal => Self::terminal(),
             ThemeName::Dark => Self::dark(),
             ThemeName::SolarizedDark => Self::solarized_dark(),
             ThemeName::SolarizedLight => Self::solarized_light(),
@@ -526,7 +557,7 @@ pub struct Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        Self::new(ThemeName::SolarizedDark)
+        Self::new(ThemeName::default())
     }
 }
 

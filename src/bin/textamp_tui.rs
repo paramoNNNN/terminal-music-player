@@ -37,6 +37,10 @@ fn main() -> Result<()> {
     };
 
     let _logging = setup_logging(verbose);
+    textamp::media::system_controls::run(run_runtime)
+}
+
+fn run_runtime() -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -103,7 +107,6 @@ async fn run_tui_mode() -> Result<()> {
         || std::env::var("TERM_SESSION_ID")
             .map(|v| v.contains("com.apple.Terminal"))
             .unwrap_or(false);
-
     // Resolve artwork mode from config, with Apple Terminal defaulting to Braille
     let configured_mode = textamp::app::state::ArtworkMode::from_config(&config.ui.artwork_mode);
     let effective_mode =
@@ -118,9 +121,15 @@ async fn run_tui_mode() -> Result<()> {
         tracing::info!("Apple Terminal detected, using halfblocks protocol for fallback");
         Ok(ratatui_image::picker::Picker::halfblocks())
     } else {
+        // Keep the detected pixel protocol inside tmux too. The image crate
+        // negotiates its passthrough; tmux alone is not a reason to downgrade.
         ratatui_image::picker::Picker::from_query_stdio()
     };
-    if let Ok(picker) = picker_result {
+    {
+        let picker = picker_result.unwrap_or_else(|error| {
+            tracing::warn!("Terminal graphics probe failed ({error}); using halfblocks artwork");
+            ratatui_image::picker::Picker::halfblocks()
+        });
         // Init renderers BEFORE overriding protocol so native type is stored
         tracing::info!(
             "Native protocol: {:?}, Artwork mode: {:?}",

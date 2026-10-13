@@ -543,6 +543,49 @@ pub fn materialize_entries(state: &AppState) -> Vec<PaletteEntry> {
         });
     }
 
+    if state
+        .sources
+        .active
+        .capabilities()
+        .supports(crate::library::capabilities::Feature::Catalog)
+    {
+        out.push(PaletteEntry {
+            label: "Browse Record Labels".into(),
+            hint: String::new(),
+            command: PaletteCommandKind::OpenLabelPage { label: None },
+            aliases: vec!["label albums artists publishers".into()],
+        });
+        for label in selected_labels(state) {
+            out.push(PaletteEntry {
+                label: format!("Go to Label: {label}"),
+                hint: String::new(),
+                command: PaletteCommandKind::OpenLabelPage { label: Some(label) },
+                aliases: vec!["record label albums artists".into()],
+            });
+        }
+    }
+    if state.view == View::Related
+        && state
+            .artist_overview
+            .as_ref()
+            .is_some_and(|page| page.selected_album.is_none())
+    {
+        out.push(PaletteEntry {
+            label: "Artist Ranking: Catalog / Most Played / Community".into(),
+            hint: String::new(),
+            command: PaletteCommandKind::CycleArtistRanking,
+            aliases: vec!["top best popular songs albums lastfm plays".into()],
+        });
+    }
+    if let Some(artist_key) = artist_page_key(state) {
+        out.push(PaletteEntry {
+            label: "Go to Artist Page".into(),
+            hint: String::new(),
+            command: PaletteCommandKind::OpenArtistPage { artist_key },
+            aliases: vec!["artist albums songs discography overview".into()],
+        });
+    }
+
     // 2. External search — non-empty query required AND each service
     //    must be enabled in Settings ("Search ⟨service⟩" toggle).
     //    Disabled services are completely hidden from the palette so
@@ -795,6 +838,15 @@ pub fn run(cmd: PaletteCommandKind, state: &mut AppState) -> Vec<Action> {
         PaletteCommandKind::StationsBack => {
             open_with_query(state, "Radio");
             vec![RadioAction::NavigateStationsBack.into()]
+        }
+        PaletteCommandKind::OpenLabelPage { label } => vec![label
+            .map_or(BrowseAction::OpenLabels, |label| {
+                BrowseAction::OpenLabelOverview { label }
+            })
+            .into()],
+        PaletteCommandKind::CycleArtistRanking => vec![BrowseAction::CycleArtistRanking.into()],
+        PaletteCommandKind::OpenArtistPage { artist_key } => {
+            vec![BrowseAction::OpenArtistOverview { artist_key }.into()]
         }
         PaletteCommandKind::ArtistRadio => vec![SearchAction::OpenArtistRadioPicker.into()],
         PaletteCommandKind::RandomAlbum => {
@@ -1061,7 +1113,11 @@ fn play_focused_track(state: &AppState, single: bool) -> Vec<Action> {
     if single {
         vec![QueueAction::PlayTrack(Box::new(tracks[index].clone())).into()]
     } else {
-        vec![QueueAction::PlayTracksNow(tracks[index..].to_vec()).into()]
+        vec![QueueAction::PlayCatalog {
+            tracks: tracks.to_vec(),
+            index,
+        }
+        .into()]
     }
 }
 
@@ -1181,4 +1237,108 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) -> PaletteOutcome {
     state.palette.selected = 0;
     refresh_matches(state);
     PaletteOutcome::Continue
+}
+
+/// Resolve only the visible selection; retained browse state must not supply
+/// an artist to an unrelated view's context menu.
+pub(crate) fn artist_page_key(state: &AppState) -> Option<String> {
+    let artists = || {
+        state
+            .library
+            .artists
+            .iter()
+            .chain(state.library.track_artists.iter())
+    };
+    if let Some(track) = state.palette_target_track() {
+        return artists()
+            .find(|artist| artist.title.eq_ignore_ascii_case(track.track_artist()))
+            .or_else(|| {
+                artists().find(|artist| {
+                    Some(&artist.rating_key) == track.grandparent_rating_key.as_ref()
+                })
+            })
+            .map(|artist| artist.rating_key.clone());
+    }
+    if state.view == View::Related && state.artist_overview.is_none() {
+        let page = state.label_overview.as_ref()?;
+        page.label.as_ref()?;
+        return if page.artists_tab {
+            page.artists
+                .get(page.index)
+                .map(|artist| artist.rating_key.clone())
+        } else {
+            page.albums
+                .get(page.index)
+                .and_then(|album| album.parent_rating_key.clone())
+        };
+    }
+    if state.view == View::Related {
+        return state
+            .artist_overview
+            .as_ref()
+            .map(|page| page.artist.rating_key.clone());
+    }
+    if state.view != View::Browse || state.category_column_focused {
+        return None;
+    }
+    match state.browse_nav()?.selected_item()? {
+        crate::app::state::BrowseItem::Artist { key, .. } => artists()
+            .find(|artist| &artist.rating_key == key)
+            .map(|artist| artist.rating_key.clone()),
+        crate::app::state::BrowseItem::Album { key, .. } => {
+            let album = state
+                .library
+                .albums
+                .iter()
+                .find(|album| &album.rating_key == key)?;
+            artists()
+                .find(|artist| Some(&artist.rating_key) == album.parent_rating_key.as_ref())
+                .map(|artist| artist.rating_key.clone())
+        }
+        _ => None,
+    }
+}
+
+fn selected_labels(state: &AppState) -> Vec<String> {
+    let album_key = state
+        .palette_target_track()
+        .and_then(|track| track.parent_rating_key)
+        .or_else(|| {
+            if state.view == View::Browse && !state.category_column_focused {
+                state.focused_album().map(|album| album.0)
+            } else {
+                None
+            }
+        });
+    let album = album_key
+        .as_ref()
+        .and_then(|key| {
+            state
+                .library
+                .albums
+                .iter()
+                .find(|album| &album.rating_key == key)
+        })
+        .or_else(|| {
+            if state.view == View::Related {
+                state
+                    .artist_overview
+                    .as_ref()
+                    .and_then(|page| page.preview_album())
+            } else {
+                None
+            }
+        });
+    album
+        .map(|album| {
+            album
+                .record_labels
+                .iter()
+                .filter(|label| !label.trim().is_empty())
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        })
+        .unwrap_or_default()
 }

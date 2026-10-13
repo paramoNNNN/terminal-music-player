@@ -171,6 +171,7 @@ async fn saving_a_server_connection_does_not_activate_it() {
         client: textamp::navidrome::Client::new(&source, "fixture".into(), None).unwrap(),
         source,
         extensions: Default::default(),
+        extensions_verified: false,
     };
     let mut config = Config {
         default_folder_source: Some("music".into()),
@@ -404,8 +405,16 @@ fn settings_panels_and_library_dialogs_use_active_theme() {
             .find(|r| !r.is_empty())
             .unwrap();
         let selected = &terminal.backend().buffer()[(rect.x, rect.y)];
-        assert_eq!(selected.bg, colors.selection_bar_bg, "{name:?}");
-        assert_eq!(selected.fg, colors.selection_bar_fg, "{name:?}");
+        if *name == ThemeName::Terminal {
+            assert_eq!(selected.bg, ratatui::style::Color::Reset);
+            assert_eq!(selected.fg, ratatui::style::Color::Reset);
+            assert!(selected
+                .modifier
+                .contains(ratatui::style::Modifier::REVERSED));
+        } else {
+            assert_eq!(selected.bg, colors.selection_bar_bg, "{name:?}");
+            assert_eq!(selected.fg, colors.selection_bar_fg, "{name:?}");
+        }
         press(&mut state, KeyCode::Esc);
     }
 }

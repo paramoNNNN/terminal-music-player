@@ -185,6 +185,9 @@ pub fn handle_key(
                 if dialog.selected_yes {
                     use crate::app::state::ConfirmAction;
                     return match dialog.on_confirm {
+                        ConfirmAction::ReplaceCatalog(request) => {
+                            vec![QueueAction::ConfirmCatalog(request).into()]
+                        }
                         ConfirmAction::RefreshCache => helpers::refresh_current_view(state),
                         ConfirmAction::ClearSourceCache(choice) => {
                             vec![SettingsAction::ClearSourceCache(choice).into()]
@@ -231,6 +234,9 @@ pub fn handle_key(
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 use crate::app::state::ConfirmAction;
                 return match dialog.on_confirm {
+                    ConfirmAction::ReplaceCatalog(request) => {
+                        vec![QueueAction::ConfirmCatalog(request).into()]
+                    }
                     ConfirmAction::RefreshCache => helpers::refresh_current_view(state),
                     ConfirmAction::ClearSourceCache(choice) => {
                         vec![SettingsAction::ClearSourceCache(choice).into()]
@@ -466,6 +472,16 @@ pub fn handle_key(
     {
         return settings::handle_settings_keys(key, state, config);
     }
+    if !in_text_capture
+        && matches!(key.code, KeyCode::Char('f' | 'F'))
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        if let Some(action) = crate::app::sources::toggle_favorite_action(state) {
+            return vec![action];
+        }
+    }
     match (key.modifiers, key.code) {
         // Cmd+A / Ctrl+A — select all rows in the currently focused
         // list. Works on the queue (when Now Playing / Queue view is
@@ -655,6 +671,43 @@ pub fn handle_key(
             state.set_status("No artist metadata available; play a tagged track first".into());
         }
         (_, KeyCode::F(5)) => {
+            if state.view == View::Related {
+                if let Some(page) = state
+                    .artist_overview
+                    .as_ref()
+                    .filter(|page| page.tab.is_artists())
+                {
+                    return vec![
+                        if page.tab == crate::app::state::ArtistOverviewTab::RelatedTags {
+                            BrowseAction::SelectArtistTab(page.tab)
+                        } else {
+                            BrowseAction::LoadArtistRelations {
+                                tab: page.tab,
+                                refresh: true,
+                            }
+                        }
+                        .into(),
+                    ];
+                }
+            }
+            if state.view == View::Related
+                && state.artist_overview.is_none()
+                && state.label_overview.is_some()
+            {
+                state.set_status("Refreshing record-label metadata…".into());
+                return vec![SystemAction::RefreshCategory(
+                    crate::app::state::RefreshCategory::Artists,
+                )
+                .into()];
+            }
+            if state.view == View::Related
+                && state.artist_overview.as_ref().is_some_and(|page| {
+                    page.rankings.mode == crate::app::state::ArtistRanking::Community
+                        && page.selected_album.is_none()
+                })
+            {
+                return vec![BrowseAction::LoadArtistCommunity { refresh: true }.into()];
+            }
             // F5 = Refresh current view
             return helpers::refresh_current_view(state);
         }
@@ -750,6 +803,18 @@ pub fn handle_key(
         }
         (KeyModifiers::SHIFT, KeyCode::Right) => {
             return vec![PlaybackAction::SeekRelative(10000).into()]
+        }
+        // Single-track queue actions complement Ctrl+E, which adds the
+        // selected track and everything after it in the current list.
+        (KeyModifiers::ALT, KeyCode::Char('e')) => {
+            if let Some(track) = state.palette_target_track() {
+                return vec![QueueAction::EnqueueTrack(Box::new(track)).into()];
+            }
+        }
+        (KeyModifiers::ALT, KeyCode::Char('n')) => {
+            if let Some(track) = state.palette_target_track() {
+                return vec![QueueAction::EnqueueTracksNext(vec![track]).into()];
+            }
         }
         // Action commands (Ctrl+key) — gated by availability check
         // Ctrl+E: Add to END of queue (skip if in search popup - handled there)
@@ -1146,6 +1211,26 @@ fn handle_artist_bio_popup_keys(key: event::KeyEvent, state: &mut AppState) -> V
 ///
 /// Priority: highlighted artist → highlighted track → highlighted album → now-playing track.
 pub(crate) fn get_similar_action(state: &mut AppState) -> Vec<Action> {
+    if state.view == View::Related {
+        if let Some(page) = &state.artist_overview {
+            if page.selected_album.is_some() {
+                return vec![
+                    BrowseAction::OpenArtistOverview {
+                        artist_key: page.artist.rating_key.clone(),
+                    }
+                    .into(),
+                    BrowseAction::SelectArtistTab(
+                        crate::app::state::ArtistOverviewTab::RelatedSonic,
+                    )
+                    .into(),
+                ];
+            }
+            return vec![BrowseAction::SelectArtistTab(
+                crate::app::state::ArtistOverviewTab::RelatedSonic,
+            )
+            .into()];
+        }
+    }
     // Store current view so we can return to it
     state.previous_view = Some(state.view);
 
@@ -1212,59 +1297,61 @@ pub(crate) fn get_similar_action(state: &mut AppState) -> Vec<Action> {
 ///
 /// Priority: highlighted artist → highlighted album's artist → highlighted track's artist → now-playing track's artist.
 pub(crate) fn get_related_action(state: &mut AppState) -> Vec<Action> {
-    state.previous_view = Some(state.view);
-
-    // 1. Highlighted artist in Browse nav
-    if state.view == View::Browse {
-        if let Some(nav) = state.browse_nav() {
-            if let Some(BrowseItem::Artist { key, title, .. }) = nav.selected_item() {
-                return vec![DataAction::LoadRelated {
-                    artist_key: key.clone(),
-                    title: title.clone(),
+    if let Some(page) = state
+        .artist_overview
+        .as_ref()
+        .filter(|_| state.view == View::Related)
+    {
+        if page.selected_album.is_some() {
+            return vec![
+                BrowseAction::OpenArtistOverview {
+                    artist_key: page.artist.rating_key.clone(),
                 }
-                .into()];
+                .into(),
+                BrowseAction::SelectArtistTab(crate::app::state::ArtistOverviewTab::RelatedServer)
+                    .into(),
+            ];
+        }
+        return vec![BrowseAction::SelectArtistTab(
+            crate::app::state::ArtistOverviewTab::RelatedServer,
+        )
+        .into()];
+    }
+    if matches!(state.view, View::Browse | View::Related) {
+        if let Some(key) = crate::app::command_palette::artist_page_key(state) {
+            if state
+                .library
+                .artists
+                .iter()
+                .chain(&state.library.track_artists)
+                .any(|artist| artist.rating_key == key)
+            {
+                return vec![
+                    BrowseAction::OpenArtistOverview { artist_key: key }.into(),
+                    BrowseAction::SelectArtistTab(
+                        crate::app::state::ArtistOverviewTab::RelatedServer,
+                    )
+                    .into(),
+                ];
             }
         }
+        state.set_status("Select an artist, album or song to show related artists".into());
+        return vec![];
     }
-
-    // 2. Highlighted album → use album's parent artist
-    if let Some((_album_key, _album_title)) = get_selected_album(state) {
-        if let Some(nav) = state.browse_nav() {
-            if let Some(artist_key) = find_artist_key_in_nav(nav) {
-                let artist_name = find_artist_name_in_nav(nav, state);
-                return vec![DataAction::LoadRelated {
-                    artist_key,
-                    title: artist_name,
-                }
-                .into()];
-            }
-        }
-    }
-
-    // 3. Highlighted track → use track's grandparent artist
-    if let Some(track) = get_selected_track(state) {
-        if let Some(artist_key) = track.grandparent_rating_key.clone() {
-            let artist_name = track.artist_name().to_string();
+    if let Some(track) = get_selected_track(state).or_else(|| {
+        matches!(state.view, View::Queue | View::NowPlaying)
+            .then(|| state.current_track().cloned())
+            .flatten()
+    }) {
+        if let Some(key) = track.grandparent_rating_key.clone() {
+            state.previous_view = Some(state.view);
             return vec![DataAction::LoadRelated {
-                artist_key,
-                title: artist_name,
+                artist_key: key,
+                title: track.track_artist().to_string(),
             }
             .into()];
         }
     }
-
-    // 4. Now-playing track → use its artist
-    if let Some(track) = state.current_track().cloned() {
-        if let Some(artist_key) = track.grandparent_rating_key.clone() {
-            let artist_name = track.artist_name().to_string();
-            return vec![DataAction::LoadRelated {
-                artist_key,
-                title: artist_name,
-            }
-            .into()];
-        }
-    }
-
     vec![]
 }
 

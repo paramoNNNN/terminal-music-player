@@ -194,7 +194,11 @@ pub(in crate::app::handlers) fn activate_similar_item(state: &mut AppState) -> V
             // Play this track + all following similar tracks (replaces queue)
             let tracks: Vec<_> = state.similar.tracks[idx..].to_vec();
             if !tracks.is_empty() {
-                vec![QueueAction::PlayTracksNow(tracks).into()]
+                vec![QueueAction::PlayCatalog {
+                    tracks: state.similar.tracks.clone(),
+                    index: idx,
+                }
+                .into()]
             } else {
                 vec![]
             }

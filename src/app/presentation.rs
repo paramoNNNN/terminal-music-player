@@ -92,6 +92,8 @@ pub struct HitRegions {
 
     /// Related popup (outer rect).
     pub related_content: Option<RelatedRegions>,
+    pub artist_overview: Option<ArtistOverviewRegions>,
+    pub label_overview: Option<ArtistOverviewRegions>,
 
     /// Tall-mode split: top half (library / browse) and bottom half
     /// (now-playing / queue). Populated only when `state.tall_mode` is
@@ -293,6 +295,7 @@ pub struct AlphabetStripRegions {
 #[derive(Debug, Clone)]
 pub struct TrackPaneRegions {
     pub outer: Rect,
+    pub max_scroll: u16,
     pub play_button: Rect,
     pub following_button: Rect,
     /// (rect, index-into-similar-list) per visible similar track.
@@ -386,10 +389,25 @@ pub struct SimilarRegions {
 /// Related popup regions.
 #[derive(Debug, Clone)]
 pub struct RelatedRegions {
+    pub rows_per_item: u16,
     /// Outer popup rect.
     pub outer: Rect,
     /// Inner content area (border excluded).
     pub inner: Rect,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArtistOverviewRegions {
+    /// Selectable item rectangles exclude release-section headings.
+    pub items: Vec<(Rect, usize)>,
+    pub tabs: Vec<(Rect, crate::app::state::ArtistOverviewTab)>,
+    pub tab_button: Option<Rect>,
+    pub ranking_button: Option<Rect>,
+    pub labels_button: Option<Rect>,
+    pub outer: Rect,
+    pub list: Rect,
+    pub first_index: usize,
+    pub row_height: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

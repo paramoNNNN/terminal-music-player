@@ -10,7 +10,10 @@ pub(in crate::app::sources::navidrome) async fn similar(
     id: &str,
     sonic: bool,
 ) -> anyhow::Result<Vec<Track>> {
-    anyhow::ensure!(!sonic || session.extensions.contains("sonicSimilarity"), "Sonic analysis unavailable: enable the AudioMuse sonicSimilarity plugin in Navidrome, then refresh with F5");
+    anyhow::ensure!(
+        !sonic || session.extensions.contains("sonicSimilarity"),
+        "Navidrome does not advertise sonicSimilarity; AudioMuse fallback may still be available"
+    );
     let params = [("id", id.into()), ("count", "50".into())];
     let songs: Vec<Song> = if sonic {
         let response = session
@@ -51,6 +54,7 @@ pub fn intercept(
             load_similar(state, tx, session, artist_key, title, SimilarMode::Artists)
         }
         Action::Data(DataAction::LoadRelated { artist_key, title }) => {
+            state.artist_overview = None;
             state.related.source_title = title;
             state.related.source_key = artist_key.clone();
             state.related.loading = true;

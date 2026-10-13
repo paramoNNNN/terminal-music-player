@@ -37,6 +37,7 @@ pub fn render(frame: &mut Frame, state: &AppState, area: Rect) {
         hr.related_content = Some(crate::app::presentation::RelatedRegions {
             outer: popup_area,
             inner,
+            rows_per_item: 2,
         });
     }
 
@@ -63,7 +64,7 @@ pub fn render(frame: &mut Frame, state: &AppState, area: Rect) {
 
     let selected_idx = state.list_state.related_index;
     let total = flat_count(&state.related.groups);
-    let visible_item_count = content_area.height as usize;
+    let visible_item_count = content_area.height as usize / 2;
     let max_text_width = content_area.width.saturating_sub(2) as usize;
 
     let scroll_offset = match state.scroll.related {
@@ -71,92 +72,85 @@ pub fn render(frame: &mut Frame, state: &AppState, area: Rect) {
         None => NavigationService::calc_scroll_offset(selected_idx, visible_item_count, total),
     };
 
-    // Build flat list items
-    let mut items: Vec<ListItem> = Vec::new();
-    let mut flat_idx = 0;
-
+    // Artist headers and albums use two-row thumbnails with one shared index
+    // per item. Mouse/scrollbar geometry uses the same rows_per_item feedback.
+    let mut entries = Vec::new();
     for group in &state.related.groups {
-        let group_size = 1 + group.albums.len();
-        let group_end = flat_idx + group_size;
-
-        // Skip groups entirely before scroll offset
-        if group_end <= scroll_offset {
-            flat_idx = group_end;
-            continue;
-        }
-
-        // Artist header
-        if flat_idx >= scroll_offset && items.len() < visible_item_count {
-            let is_selected = flat_idx == selected_idx;
-            let alias_suffix = match group.source {
-                RelatedSource::Alias => " (alias)",
-                RelatedSource::SimilarTag => " (similar)",
-                RelatedSource::Navidrome => "",
-            };
-            let header_text = format!("  {}{}", group.artist.title, alias_suffix);
-            let header_display = truncate_middle(&header_text, max_text_width);
-
-            let (fg, bg) = if is_selected {
-                (
-                    Style::default()
-                        .fg(t.colors.selection_text)
-                        .add_modifier(Modifier::BOLD),
-                    Style::default().bg(t.colors.selection_bar_bg),
-                )
-            } else {
-                (
-                    Style::default()
-                        .fg(t.colors.fg_accent)
-                        .add_modifier(Modifier::BOLD),
-                    Style::default(),
-                )
-            };
-
-            items.push(ListItem::new(Line::from(Span::styled(header_display, fg))).style(bg));
-        }
-        flat_idx += 1;
-
-        // Albums
+        let suffix = match group.source {
+            RelatedSource::Alias => " (alias)",
+            RelatedSource::SimilarTag => " (similar)",
+            RelatedSource::Navidrome => "",
+        };
+        entries.push((
+            group.artist.rating_key.as_str(),
+            group.artist.thumb.as_deref(),
+            format!("{}{suffix}", group.artist.title),
+            "Artist".to_owned(),
+            true,
+        ));
         for album in &group.albums {
-            if flat_idx >= scroll_offset && items.len() < visible_item_count {
-                let is_selected = flat_idx == selected_idx;
-                let year_str = album.year.map(|y| format!("{}", y)).unwrap_or_default();
-                let title_width = if !year_str.is_empty() {
-                    max_text_width.saturating_sub(year_str.len() + 7) // "    " + "  " + year
-                } else {
-                    max_text_width.saturating_sub(4)
-                };
-                let title_display = truncate_middle(&album.title, title_width);
-
-                let (fg, bg) = if is_selected {
-                    (
-                        Style::default().fg(t.colors.selection_text),
-                        Style::default().bg(t.colors.selection_bar_bg),
-                    )
-                } else {
-                    (Style::default().fg(t.colors.fg_primary), Style::default())
-                };
-
-                let line = if !year_str.is_empty() {
-                    let title_chars = title_display.chars().count();
-                    let pad = title_width.saturating_sub(title_chars);
-                    format!("    {}{}  {}", title_display, " ".repeat(pad), year_str)
-                } else {
-                    format!("    {}", title_display)
-                };
-
-                items.push(ListItem::new(Line::from(Span::styled(line, fg))).style(bg));
-            }
-            flat_idx += 1;
-        }
-
-        if items.len() >= visible_item_count {
-            break;
+            entries.push((
+                album.rating_key.as_str(),
+                album.thumb.as_deref(),
+                album.title.clone(),
+                album.year.map_or(String::new(), |year| year.to_string()),
+                false,
+            ));
         }
     }
-
-    let list = List::new(items);
-    frame.render_widget(list, content_area);
+    let items: Vec<ListItem> = entries
+        .iter()
+        .enumerate()
+        .skip(scroll_offset)
+        .take(visible_item_count)
+        .map(|(index, (_, _, title, subtitle, is_artist))| {
+            let selected = index == selected_idx;
+            let fg = if selected {
+                t.colors.selection_text
+            } else if *is_artist {
+                t.colors.fg_accent
+            } else {
+                t.colors.fg_primary
+            };
+            let bg = if selected {
+                t.colors.selection_bar_bg
+            } else {
+                t.colors.bg_primary
+            };
+            let style = Style::default().fg(fg).bg(bg);
+            ListItem::new(vec![
+                Line::styled(
+                    format!(
+                        "      {}",
+                        truncate_middle(title, max_text_width.saturating_sub(6))
+                    ),
+                    style,
+                ),
+                Line::styled(format!("      {subtitle}"), style),
+            ])
+            .style(style)
+        })
+        .collect();
+    frame.render_widget(List::new(items), content_area);
+    for (row, (key, thumb, _, _, _)) in entries
+        .iter()
+        .skip(scroll_offset)
+        .take(visible_item_count)
+        .enumerate()
+    {
+        crate::ui::artwork::render_thumbnail(
+            frame,
+            state,
+            Rect::new(
+                content_area.x,
+                content_area.y + row as u16 * 2,
+                content_area.width.min(4),
+                2,
+            ),
+            key,
+            *thumb,
+        );
+    }
 
     // Scrollbar + position indicator
     if total > visible_item_count {

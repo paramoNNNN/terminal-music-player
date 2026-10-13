@@ -61,6 +61,137 @@ pub fn intercept(
 ) -> Option<Vec<Action>> {
     let mut follow = vec![];
     match action.clone() {
+        Action::Browse(BrowseAction::LoadArtistCommunity { refresh }) => {
+            let page = state.artist_overview.as_mut()?;
+            if page.rankings.loading {
+                return Some(vec![]);
+            }
+            page.rankings.loading = true;
+            page.rankings.error = None;
+            let artist_key = page.artist.rating_key.clone();
+            let name = page.artist.title.clone();
+            let request_id = state.artist_overview_request_id;
+            let library_key = state.active_library.clone().unwrap_or_default();
+            let allowed: std::collections::HashSet<_> = state
+                .library
+                .all_tracks
+                .iter()
+                .map(|track| track.rating_key.clone())
+                .collect();
+            let ticket = session
+                .cache_store()
+                .map(|store| store.ticket(&format!("artist-top-songs:{artist_key}")));
+            if let Ok(ticket) = &ticket {
+                match ticket.read::<Vec<Track>>(crate::library::cache::REFRESH_INTERVAL) {
+                    Ok(Some(mut hit)) => {
+                        hit.value
+                            .retain(|track| allowed.contains(&track.rating_key));
+                        for cached in &mut hit.value {
+                            if let Some(current) = state
+                                .library
+                                .all_tracks
+                                .iter()
+                                .find(|track| track.rating_key == cached.rating_key)
+                            {
+                                cached.favorited = current.favorited;
+                                cached.view_count = current.view_count.or(cached.view_count);
+                            }
+                        }
+                        if !refresh && !hit.stale {
+                            return Some(vec![BrowseAction::ArtistCommunityLoaded {
+                                library_key,
+                                artist_key,
+                                request_id,
+                                result: Ok(hit.value),
+                            }
+                            .into()]);
+                        }
+                        page.rankings.community = hit.value;
+                        page.rankings.loaded = true;
+                        let mode = page.rankings.mode;
+                        let (index, pin) = (page.index, page.scroll_pin);
+                        page.set_ranking(mode);
+                        page.index = index;
+                        page.scroll_pin = pin;
+                    }
+                    Err(error) => tracing::warn!("Read artist popularity cache: {error}"),
+                    _ => {}
+                }
+            }
+            let session = session.clone();
+            spawn(state, tx, "overview-community", async move {
+                let result = async {
+                    let ticket = ticket?;
+                    let id = session.id(&artist_key)?;
+                    let id = session
+                        .extensions
+                        .contains("topSongsByArtistId")
+                        .then_some(id.as_str());
+                    let (songs, agent) = session.client.top_songs_with_source(&name, id).await?;
+                    let source = agent
+                        .map(|agent| format!("Navidrome getTopSongs · {agent}"))
+                        .unwrap_or_else(|| {
+                            "Navidrome getTopSongs · upstream agent not reported".into()
+                        });
+                    let tracks: Vec<_> = songs
+                        .into_iter()
+                        .map(|song| {
+                            let mut track = session.track(song);
+                            track
+                                .metadata_tags
+                                .insert("Ranking source".into(), source.clone());
+                            track
+                        })
+                        .filter(|track| allowed.contains(&track.rating_key))
+                        .collect();
+                    if let Err(error) = ticket.write(&tracks) {
+                        tracing::warn!("Cache artist popularity: {error}");
+                    }
+                    Ok(tracks)
+                }
+                .await
+                .map_err(failure);
+                Ok(vec![BrowseAction::ArtistCommunityLoaded {
+                    library_key,
+                    artist_key,
+                    request_id,
+                    result,
+                }
+                .into()])
+            });
+        }
+
+        Action::Browse(BrowseAction::LoadOverviewAlbum { album_key }) => {
+            let session = session.clone();
+            let library_key = state.active_library.clone().unwrap_or_default();
+            spawn(state, tx, "overview-album", async move {
+                let result = async {
+                    let mut raw = session.client.album(&session.id(&album_key)?).await?;
+                    anyhow::ensure!(
+                        session.key(&raw.id) == album_key,
+                        "Server returned a different album"
+                    );
+                    let cover = raw.cover_art.as_ref().map(|id| session.key(id));
+                    let tracks = std::mem::take(&mut raw.song)
+                        .into_iter()
+                        .map(|track| {
+                            let mut track = session.track(track);
+                            track.parent_thumb = cover.clone();
+                            track
+                        })
+                        .collect();
+                    Ok((Box::new(session.album(raw)), tracks))
+                }
+                .await
+                .map_err(failure);
+                Ok(vec![BrowseAction::OverviewAlbumLoaded {
+                    library_key,
+                    album_key,
+                    result,
+                }
+                .into()])
+            });
+        }
         Action::Miller(MillerAction::LoadArtistAlbumsForMiller {
             artist_key,
             replace_child,

@@ -454,6 +454,14 @@ impl EventLoop {
                 dirty |= event_needs_render;
             }
 
+            for command in crate::media::system_controls::sync(state) {
+                if let Some(action) = crate::media::system_controls::playback_action(command, state)
+                {
+                    self.dispatch(action.into(), state, audio).await?;
+                    dirty = true;
+                }
+            }
+
             if state.should_quit {
                 // Stop and join the sole terminal reader before touching the
                 // input queue or restoring terminal modes.

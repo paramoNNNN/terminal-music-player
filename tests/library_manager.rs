@@ -111,6 +111,7 @@ fn sole_navidrome_folder_has_one_named_choice_in_settings_and_switcher() {
         client: textamp::navidrome::Client::new(source, "fixture".into(), None).unwrap(),
         source: source.clone(),
         extensions: Default::default(),
+        extensions_verified: false,
     };
     assert_eq!(session.client.folder.as_deref(), Some("1"));
     let mut state = AppState::new();

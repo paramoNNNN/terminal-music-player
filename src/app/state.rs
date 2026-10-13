@@ -882,6 +882,21 @@ pub struct LazyPlaylist {
 }
 
 impl BrowseColumn {
+    pub fn update_track_favorite(&mut self, key: &str, favorited: bool) {
+        for track in self
+            .tracks
+            .iter_mut()
+            .chain(self.original_tracks.iter_mut().flatten())
+        {
+            if track.rating_key == key {
+                track.favorited = Some(favorited);
+                if !favorited {
+                    track.metadata_tags.remove("Favorited");
+                }
+            }
+        }
+    }
+
     pub fn new(title: impl Into<String>, items: Vec<BrowseItem>) -> Self {
         Self {
             title: title.into(),
@@ -1359,8 +1374,8 @@ pub enum QueueContents {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MillerLayoutMode {
-    /// Every visible column shrinks to fit. The whole stack is always
-    /// on screen.
+    /// Show two panes around the focused column, hiding older ancestors
+    /// and reserving a slot for track details only when needed.
     #[default]
     Shrinking,
     /// Every column keeps its starting width (half the inner area).
@@ -1545,6 +1560,7 @@ pub struct ArtworkState {
     grid_cache_bytes: usize,
     pub grid_generation: u64,
     pub grid_pending: std::collections::HashSet<String>,
+    pub grid_failures: HashMap<String, std::time::Instant>,
     pub cache_stats: Option<(usize, u64)>,
     pub default_visible: bool,
     pub mode: ArtworkMode,
@@ -1565,6 +1581,14 @@ pub struct ArtworkState {
 }
 
 impl ArtworkState {
+    pub fn needs_grid_art(&self, key: &str) -> bool {
+        !self.grid_cache.contains_key(key)
+            && !self.grid_pending.contains(key)
+            && self
+                .grid_failures
+                .get(key)
+                .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(30))
+    }
     const MAX_GRID_CACHE_ENTRIES: usize = 256;
     const MAX_GRID_CACHE_BYTES: usize = 128 * 1024 * 1024;
 
@@ -1600,6 +1624,7 @@ impl ArtworkState {
     }
 
     pub fn clear_grid_art(&mut self) {
+        self.grid_failures.clear();
         self.grid_generation = self.grid_generation.wrapping_add(1);
         self.grid_cache.clear();
         self.grid_cache_order.clear();
@@ -1671,6 +1696,296 @@ pub struct RelatedViewState {
     pub loading: bool,
     pub source_title: String,
     pub source_key: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ArtistOverviewTab {
+    #[default]
+    Albums,
+    Songs,
+    TopAlbums,
+    TopPlayed,
+    Community,
+    RelatedTags,
+    RelatedSonic,
+    RelatedServer,
+}
+impl ArtistOverviewTab {
+    pub const ALL: [Self; 8] = [
+        Self::Albums,
+        Self::Songs,
+        Self::TopAlbums,
+        Self::TopPlayed,
+        Self::Community,
+        Self::RelatedTags,
+        Self::RelatedSonic,
+        Self::RelatedServer,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Albums => "Albums",
+            Self::Songs => "Songs",
+            Self::TopAlbums => "Top albums",
+            Self::TopPlayed => "Top plays",
+            Self::Community => "Top server",
+            Self::RelatedTags => "Tags",
+            Self::RelatedSonic => "Sonic",
+            Self::RelatedServer => "Related",
+        }
+    }
+    pub fn is_albums(self) -> bool {
+        matches!(self, Self::Albums | Self::TopAlbums)
+    }
+    pub fn is_songs(self) -> bool {
+        matches!(self, Self::Songs | Self::TopPlayed | Self::Community)
+    }
+    pub fn is_artists(self) -> bool {
+        matches!(
+            self,
+            Self::RelatedTags | Self::RelatedSonic | Self::RelatedServer
+        )
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ArtistMatch {
+    pub artist: Artist,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ArtistRelations {
+    pub artists: Vec<ArtistMatch>,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ArtistRanking {
+    #[default]
+    Catalog,
+    MostPlayed,
+    Community,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ArtistRankings {
+    pub relations: ArtistRelations,
+    pub community_source: String,
+    pub mode: ArtistRanking,
+    pub tracks: Vec<Track>,
+    pub albums: Vec<Album>,
+    pub community: Vec<Track>,
+    pub loading: bool,
+    pub loaded: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LabelOverviewState {
+    pub labels: Vec<String>,
+    pub label: Option<String>,
+    pub albums: Vec<Album>,
+    pub artists: Vec<Artist>,
+    pub artists_tab: bool,
+    pub index: usize,
+    pub scroll_pin: Option<usize>,
+    pub return_view: View,
+}
+impl LabelOverviewState {
+    pub fn len(&self) -> usize {
+        if self.label.is_none() {
+            self.labels.len()
+        } else if self.artists_tab {
+            self.artists.len()
+        } else {
+            self.albums.len()
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ArtistOverviewState {
+    pub rankings: ArtistRankings,
+    pub from_label_album: bool,
+    pub artist: Artist,
+    pub albums: Vec<Album>,
+    pub tracks: Vec<Track>,
+    pub album_tracks: Vec<Track>,
+    pub selected_album: Option<Album>,
+    pub album_loading: bool,
+    pub album_error: Option<String>,
+    pub tab: ArtistOverviewTab,
+    pub index: usize,
+    pub scroll_pin: Option<usize>,
+    pub return_view: View,
+}
+
+impl ArtistOverviewState {
+    pub fn release_section(&self, album: &Album) -> crate::library::catalog::AlbumReleaseGroup {
+        if album
+            .parent_rating_key
+            .as_ref()
+            .is_some_and(|key| key != &self.artist.rating_key)
+            && !album
+                .artist_credits
+                .iter()
+                .any(|credit| credit.matches(&self.artist))
+            && !album.artist_name().eq_ignore_ascii_case(&self.artist.title)
+        {
+            crate::library::catalog::AlbumReleaseGroup::AppearsIn
+        } else {
+            album.release_group()
+        }
+    }
+    pub fn sort_releases(&mut self) {
+        let mut albums = std::mem::take(&mut self.albums);
+        albums.sort_by_key(|album| {
+            let date = album.release_sort_date();
+            (
+                self.release_section(album),
+                date.is_none(),
+                std::cmp::Reverse(date),
+                album.title.to_lowercase(),
+                album.rating_key.clone(),
+            )
+        });
+        self.albums = albums;
+    }
+    pub fn list_len(&self) -> usize {
+        if self.selected_album.is_some() {
+            self.album_tracks.len()
+        } else if self.tab.is_artists() {
+            self.rankings.relations.artists.len()
+        } else if self.tab.is_albums() {
+            self.display_albums().len()
+        } else {
+            self.display_tracks().len()
+        }
+    }
+    pub fn display_albums(&self) -> &[Album] {
+        if self.rankings.mode == ArtistRanking::Catalog {
+            &self.albums
+        } else {
+            &self.rankings.albums
+        }
+    }
+    pub fn display_tracks(&self) -> &[Track] {
+        if self.selected_album.is_some() {
+            &self.album_tracks
+        } else if self.rankings.mode == ArtistRanking::Catalog {
+            &self.tracks
+        } else {
+            &self.rankings.tracks
+        }
+    }
+    pub fn album_plays(&self, album: &Album) -> Option<u64> {
+        album.play_count.or_else(|| {
+            self.tracks
+                .iter()
+                .filter(|t| t.parent_rating_key.as_deref() == Some(&album.rating_key))
+                .filter_map(|t| t.view_count)
+                .reduce(u64::saturating_add)
+        })
+    }
+    pub fn set_ranking(&mut self, mode: ArtistRanking) {
+        self.sort_releases();
+        self.rankings.mode = mode;
+        self.index = 0;
+        self.scroll_pin = None;
+        self.rankings.tracks = match mode {
+            ArtistRanking::Community => self.rankings.community.clone(),
+            _ => self.tracks.clone(),
+        };
+        self.rankings.albums = self.albums.clone();
+        if mode == ArtistRanking::MostPlayed {
+            self.rankings
+                .tracks
+                .sort_by_key(|track| std::cmp::Reverse(track.view_count.unwrap_or(0)));
+            let plays: std::collections::HashMap<_, _> = self
+                .albums
+                .iter()
+                .map(|album| {
+                    (
+                        album.rating_key.clone(),
+                        self.album_plays(album).unwrap_or(0),
+                    )
+                })
+                .collect();
+            self.rankings
+                .albums
+                .sort_by_key(|album| std::cmp::Reverse(plays[&album.rating_key]));
+        } else if mode == ArtistRanking::Community {
+            // These are appearances in ranked songs, not a fabricated top-albums chart.
+            let mut seen = std::collections::HashSet::new();
+            self.rankings.albums = self
+                .rankings
+                .community
+                .iter()
+                .filter_map(|track| track.parent_rating_key.as_ref())
+                .filter(|key| seen.insert((*key).clone()))
+                .filter_map(|key| {
+                    self.albums
+                        .iter()
+                        .find(|album| &album.rating_key == key)
+                        .cloned()
+                })
+                .collect();
+        }
+    }
+
+    pub fn preview_album(&self) -> Option<&Album> {
+        self.selected_album.as_ref().or_else(|| {
+            (self.tab.is_albums())
+                .then(|| self.display_albums().get(self.index))
+                .flatten()
+        })
+    }
+
+    /// The request and renderer must use the same identity, even when a song
+    /// supplies the cover missing from its album entry.
+    pub fn artwork(&self) -> Option<(&str, &str)> {
+        if self.tab.is_artists() {
+            if let Some(found) = self.rankings.relations.artists.get(self.index) {
+                return found
+                    .artist
+                    .thumb
+                    .as_deref()
+                    .map(|thumb| (found.artist.rating_key.as_str(), thumb));
+            }
+        }
+        if let Some(album) = self.preview_album() {
+            let thumb = album.thumb.as_deref().or_else(|| {
+                self.album_tracks
+                    .iter()
+                    .chain(&self.tracks)
+                    .find(|track| {
+                        track.parent_rating_key.as_deref() == Some(&album.rating_key)
+                            && track.best_thumb().is_some()
+                    })
+                    .and_then(Track::best_thumb)
+            })?;
+            return Some((&album.rating_key, thumb));
+        }
+        if self.tab.is_songs() {
+            let track = self.display_tracks().get(self.index)?;
+            let thumb = track.best_thumb().or_else(|| {
+                self.albums
+                    .iter()
+                    .find(|album| Some(&album.rating_key) == track.parent_rating_key.as_ref())
+                    .and_then(|album| album.thumb.as_deref())
+            })?;
+            return Some((&track.rating_key, thumb));
+        }
+        self.artist
+            .thumb
+            .as_deref()
+            .map(|thumb| (self.artist.rating_key.as_str(), thumb))
+    }
 }
 
 pub type CompilationState = crate::services::compilations::CompilationIndex;
@@ -1763,6 +2078,8 @@ pub struct SearchState {
 /// Queue and playback mode state.
 #[derive(Debug, Default)]
 pub struct QueueState {
+    /// Order installed by the last catalog playback; metadata/progress do not dirty it.
+    pub catalog_order: Option<Vec<String>>,
     pub tracks: Vec<Track>,
     pub index: Option<usize>,
     pub selected: std::collections::BTreeSet<usize>,
@@ -1772,6 +2089,27 @@ pub struct QueueState {
     pub undo_snapshot: Option<QueueSnapshot>,
     pub shuffle_undo_queue: Option<Vec<Track>>,
     pub shuffle_undo_index: Option<usize>,
+}
+
+impl QueueState {
+    pub fn is_modified(&self) -> bool {
+        !self.tracks.is_empty()
+            && self.catalog_order.as_ref().is_none_or(|order| {
+                !self
+                    .tracks
+                    .iter()
+                    .map(|track| &track.rating_key)
+                    .eq(order.iter())
+            })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingCatalogPlayback {
+    pub tracks: Vec<Track>,
+    pub index: usize,
+    pub library_generation: u64,
+    pub expected_queue: Vec<String>,
 }
 
 /// One shared output selection and discovery state for every entry route.
@@ -1849,6 +2187,10 @@ pub struct AppState {
 
     // Related artists (Ctrl+R)
     pub related: RelatedViewState,
+    /// Dedicated two-pane artist and album overview.
+    pub artist_overview: Option<ArtistOverviewState>,
+    pub artist_overview_request_id: u64,
+    pub label_overview: Option<LabelOverviewState>,
 
     // Playback
     pub playback: PlaybackState,
@@ -2027,6 +2369,7 @@ pub struct AppState {
     /// Index of the highlighted row inside the focused track-details
     /// pane: 0 = Play button, 1..=N = Sonically-Similar tracks.
     pub track_pane_index: usize,
+    pub track_pane_scroll: Option<(String, u16)>,
 
     /// Live audio sample tap from the audio backend, drained each
     /// Tick into `vectorscope_buffer` for the vectorscope
@@ -2208,9 +2551,9 @@ impl DjMode {
 
     pub fn description(&self) -> &'static str {
         match self {
-            DjMode::Stretch => "Inserts a sonic bridge between current and next",
-            DjMode::Gemini => "Inserts a sonically similar track on each transition",
-            DjMode::Freeze => "Keeps the mood going with sonically similar tracks",
+            DjMode::Stretch => "Sonic path via Navidrome or AudioMuse; inserts a bridge",
+            DjMode::Gemini => "Sonic similarity via Navidrome or AudioMuse",
+            DjMode::Freeze => "Sonic similarity via Navidrome or AudioMuse",
             DjMode::Twofer => "Inserts a same-artist track when next differs",
             DjMode::Contempo => "Keeps the mood going with tracks from the same era",
             DjMode::Groupie => "Queues tracks from current and related artists",
@@ -2589,6 +2932,9 @@ impl AppState {
             library: LibraryData::default(),
             similar: SimilarViewState::default(),
             related: RelatedViewState::default(),
+            artist_overview: None,
+            artist_overview_request_id: 0,
+            label_overview: None,
             playback: PlaybackState::default(),
             queue: QueueState::default(),
             queue_play_request_id: 0,
@@ -2653,6 +2999,7 @@ impl AppState {
             select_mode: false,
             track_pane_focused: false,
             track_pane_index: 0,
+            track_pane_scroll: None,
             vectorscope_tap: None,
             studio_meters: crate::app::meters::StudioMeters::default(),
             vectorscope_buffer: std::collections::VecDeque::with_capacity(VECTORSCOPE_BUFFER_LEN),
@@ -2899,6 +3246,14 @@ impl AppState {
                     let col = self.browse_nav()?.focused()?;
                     (&col.tracks, col.selected_index)
                 }
+            }
+            View::Related if self.artist_overview.is_some() => {
+                let page = self.artist_overview.as_ref()?;
+                if page.selected_album.is_none() && !page.tab.is_songs() {
+                    return None;
+                }
+                let tracks = page.display_tracks();
+                (tracks, page.index)
             }
             _ => return None,
         };
@@ -3827,6 +4182,13 @@ pub enum PaletteCommandKind {
     /// Drill into the currently-playing track's album in the Library
     /// view (so the user lands on it as if they'd browsed there).
     OpenInLibrary,
+    OpenArtistPage {
+        artist_key: String,
+    },
+    OpenLabelPage {
+        label: Option<String>,
+    },
+    CycleArtistRanking,
     /// Open the sort popup for the focused column.
     OpenSort,
     /// Toggle album-art tiles on the focused album column.
@@ -4013,6 +4375,8 @@ pub struct PlaybackState {
     /// Identity of the current URL/preparation effect. This advances before
     /// transcode negotiation so a late decision cannot start an old track.
     pub preparation_id: u64,
+    /// Bitrate limit captured when the current Navidrome stream was opened.
+    pub stream_bitrate_limit: Option<u32>,
     pub status: PlayStatus,
     pub position_ms: u64,
     pub duration_ms: u64,
@@ -4030,6 +4394,7 @@ impl Default for PlaybackState {
         Self {
             request_id: 0,
             preparation_id: 0,
+            stream_bitrate_limit: None,
             status: PlayStatus::Stopped,
             position_ms: 0,
             duration_ms: 0,
@@ -4513,6 +4878,7 @@ pub struct ConfirmDialog {
 /// Action to take when confirmation dialog is confirmed.
 #[derive(Debug, Clone)]
 pub enum ConfirmAction {
+    ReplaceCatalog(Box<PendingCatalogPlayback>),
     NavidromeDeletePlaylist(String),
     NavidromeReplacePlaylist(String),
     RemoveNavidrome(String),

@@ -126,7 +126,12 @@ impl DisplayItem for crate::library::models::Album {
 
 impl DisplayItem for crate::library::models::Track {
     fn display_text(&self) -> Cow<'_, str> {
-        Cow::Owned(format!("{} - {}", self.track_artist(), self.title))
+        Cow::Owned(format!(
+            "{} {} - {}",
+            super::track_list::favorite_marker(self.favorited),
+            self.track_artist(),
+            self.title
+        ))
     }
 }
 
