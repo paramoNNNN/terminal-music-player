@@ -12,3 +12,7 @@ dev/out/
 
 # Claude Code per-project workspace (chat transcripts, memory).
 .claude/
+
+# Python release tooling/test bytecode.
+__pycache__/
+*.pyc

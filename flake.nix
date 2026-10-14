@@ -25,6 +25,15 @@
                 && pkgs.lib.cleanSourceFilter path type;
             };
             cargoLock.lockFile = ./Cargo.lock;
+            # Test the full suite without applying release LTO to every test binary.
+            checkType = "debug";
+            env = {
+              CARGO_INCREMENTAL = "0";
+              CARGO_PROFILE_DEV_DEBUG = "0";
+              CARGO_PROFILE_TEST_DEBUG = "0";
+              CARGO_PROFILE_DEV_STRIP = "symbols";
+              CARGO_PROFILE_TEST_STRIP = "symbols";
+            };
             nativeBuildInputs = nativeInputs pkgs;
             nativeCheckInputs = [ pkgs.python3 ];
             buildInputs = libraryInputs pkgs;

@@ -481,3 +481,43 @@ at the user's server. See AGENTS.md and README.md for upstream verification rule
 - Commit includes the project source, tests, diagnostic examples and vendored
   ratatui-image patch. Its upstream LICENSE is preserved verbatim, including its
   existing trailing blank line. Project-source whitespace checks passed.
+
+### GitHub binary releases and private Nix cache — 2026-10-14
+
+- Added pinned GitHub Actions workflows for native x86_64/ARM64 Linux/macOS
+  release archives and for the exact existing Nix flake package. Tagged native
+  releases publish only after all four platform test/build/smoke jobs pass;
+  manual runs produce artifacts without publishing. Nix cache builds run on
+  master pushes/tags/manual dispatch when a cache name is configured.
+- The Nix workflow uses repository variable CACHIX_CACHE and secret
+  CACHIX_AUTH_TOKEN, builds/tests and smoke-checks the flake output, then pushes
+  its runtime closure. No public-cache default or embedded token was added.
+  Nix package checks use the debug profile (with debug symbols/incremental off)
+  so every test executable does not incur release LTO; the app remains optimized.
+- Native archives contain binary, licenses, build revision/platform/version and
+  SHA-256 metadata plus a checksum sidecar. Added authenticated gh downloader
+  and atomic installer. It resolves latest to one tag, checks archive/binary
+  digests and architecture, rejects symlink destinations, and leaves existing
+  installations untouched on failure. NixOS uses the flake/cache route.
+- Eight isolated Python fixture tests passed for all archive platforms, checksum
+  and download failures, atomic replacement, native platform selection, NixOS
+  routing and symlink rejection. Actionlint/shellcheck passed; Nix evaluated the
+  Linux package's debug check profile. README and docs/binary-distribution.md
+  contain full cache, private-token, release and NixOS/Home Manager setup.
+- User has used other NUR packages but owns no nur.nix: documented that a private
+  flake input is sufficient, with specialArgs/extraSpecialArgs examples. No NUR
+  registration, public repository or source-input override is required.
+- Native macOS release build passed with no Rust warnings; the actual binary
+  passed archive verification and the isolated browse-only terminal smoke test.
+  Final workflow lint and macOS package derivation evaluation passed. Initial
+  validation hit disk exhaustion and a terminated compiler; generated build
+  artifacts were cleaned and verification retried with one Cargo job. Native CI
+  uses that limit; Nix CI builds one derivation with two cores.
+- Final serial validation passed: cargo test (488 passed, zero failed, four
+  ignored), cargo fmt --all -- --check and cargo clippy --all-targets -- -D
+  warnings. Eight release-tool fixture tests also passed. Other-platform builds
+  and actual cache substitution remain to be verified by GitHub CI after setup.
+- User authorized committing and pushing the distribution changes to origin.
+  GitHub CLI is unauthenticated locally; Git uses the existing SSH remote.
+  GitHub settings, Cachix account/token setup and release tagging still require
+  setup; no personal binary replacement was performed here.

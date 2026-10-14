@@ -1,0 +1,101 @@
+name: Release binaries
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binaries-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.system }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-22.04
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+          - system: aarch64-darwin
+            runner: macos-14
+          - system: x86_64-darwin
+            runner: macos-15-intel
+    env:
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_PROFILE_DEV_STRIP: symbols
+      CARGO_PROFILE_TEST_STRIP: symbols
+      RUSTFLAGS: '-D warnings'
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libssl-dev pkg-config
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+      - name: Check and test
+        env:
+          XDG_CONFIG_HOME: ${{ runner.temp }}/textamp/config
+          XDG_DATA_HOME: ${{ runner.temp }}/textamp/data
+          XDG_CACHE_HOME: ${{ runner.temp }}/textamp/cache
+          XDG_STATE_HOME: ${{ runner.temp }}/textamp/state
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          python3 -m unittest discover -s tests -p 'test_release_tools.py' -v
+      - name: Build and smoke test
+        run: |
+          cargo build --locked --release --bin textamp
+          python3 tests/fixtures/folder_tui_smoke.py target/release/textamp --browse-only
+      - name: Package binary
+        env:
+          TEXTAMP_SYSTEM: ${{ matrix.system }}
+          TEXTAMP_REVISION: ${{ github.sha }}
+        run: |
+          python3 scripts/package-release.py "$TEXTAMP_SYSTEM" target/release/textamp dist --revision "$TEXTAMP_REVISION"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: textamp-${{ matrix.system }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: textamp-*
+          path: dist
+          merge-multiple: true
+      - name: Create release after all platforms pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/* --repo "$GH_REPO" --verify-tag --generate-notes --title "Textamp $RELEASE_TAG"

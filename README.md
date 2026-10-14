@@ -2,6 +2,25 @@
 
 For this NixOS/MacBook MVP, start with [MVP.md](MVP.md) and run `./run`.
 
+## Prebuilt binaries and Nix cache
+
+GitHub Actions can build Linux/macOS releases for x86_64 and ARM64, and populate
+an authenticated Cachix cache for the existing flake package. See
+[the setup and installation guide](docs/binary-distribution.md) for GitHub
+variables/secrets, private-cache access and complete NixOS/Home Manager examples.
+You do not need to publish this private project to NUR or create `nur.nix`.
+
+Once a release is published, macOS can install/update it without compiling:
+
+```sh
+gh auth login
+python3 scripts/install-binary.py
+```
+
+For NixOS, use the flake package with the configured Cachix cache. The default
+`./run` launcher remains a source build. Workflows must be pushed and the cache
+configured before remote prebuilt downloads are available.
+
 ## Add Textamp to a Nix configuration
 
 The repository flake exports `packages.<system>.default` for x86_64/aarch64 Linux
