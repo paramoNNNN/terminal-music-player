@@ -4384,6 +4384,8 @@ pub struct PlaybackState {
     /// Monotonic identity of the current local playback attempt. Async audio
     /// completions and delayed retries are ignored when this no longer matches.
     pub request_id: u64,
+    /// Delayed recovery belongs to one attempt, even while paused or buffering.
+    pub retry_pending: Option<u64>,
     /// Identity of the current URL/preparation effect. This advances before
     /// transcode negotiation so a late decision cannot start an old track.
     pub preparation_id: u64,
@@ -4406,6 +4408,7 @@ impl Default for PlaybackState {
     fn default() -> Self {
         Self {
             request_id: 0,
+            retry_pending: None,
             preparation_id: 0,
             stream_bitrate_limit: None,
             status: PlayStatus::Stopped,

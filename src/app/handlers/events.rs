@@ -653,7 +653,10 @@ pub fn handle_app_event(
                 );
                 return vec![];
             }
+            let was_paused = state.playback.status == PlayStatus::Paused;
             state.playback.status = PlayStatus::Stopped;
+            state.playback.retry_pending = None;
+            state.playback.playback_started_at = None;
             state.consecutive_playback_errors += 1;
 
             let track_info = state
@@ -669,6 +672,12 @@ pub fn handle_app_event(
                 let delay = delays_ms
                     [(state.consecutive_playback_errors as usize - 1).min(delays_ms.len() - 1)];
                 let playback_id = state.playback.request_id;
+                state.playback.retry_pending = Some(playback_id);
+                state.playback.status = if was_paused {
+                    PlayStatus::Paused
+                } else {
+                    PlayStatus::Buffering
+                };
                 tracing::warn!(
                     "Playback error (retry {}/5 for queue[{}] '{}', delay {}ms): {}",
                     state.consecutive_playback_errors,
@@ -717,8 +726,9 @@ pub fn handle_app_event(
         }
         Event::Playback(PlaybackEvent::RetryAfterDelay { playback_id }) => {
             if playback_id == state.playback.request_id
-                && state.playback.status == PlayStatus::Stopped
+                && state.playback.retry_pending == Some(playback_id)
             {
+                state.playback.retry_pending = None;
                 vec![PlaybackAction::RetryCurrentTrack.into()]
             } else {
                 tracing::debug!("Ignoring stale delayed playback retry");
@@ -732,14 +742,21 @@ pub fn handle_app_event(
         }
         Event::Playback(PlaybackEvent::BufferingEnd { playback_id }) => {
             if playback_id != state.playback.request_id
-                || state.playback.status != PlayStatus::Buffering
+                || state.playback.retry_pending == Some(playback_id)
+                || !matches!(
+                    state.playback.status,
+                    PlayStatus::Buffering | PlayStatus::Paused
+                )
             {
                 tracing::debug!("Ignoring stale buffering completion");
                 return vec![];
             }
             // The decoder actor emits this only after it has decoded a PCM
             // runway and attached the source to the device mixer.
-            state.playback.status = PlayStatus::Playing;
+            if state.playback.status != PlayStatus::Paused {
+                state.playback.status = PlayStatus::Playing;
+            }
+            state.playback.retry_pending = None;
             state.playback.playback_started_at = Some(std::time::Instant::now());
             vec![]
         }

@@ -534,3 +534,26 @@ at the user's server. See AGENTS.md and README.md for upstream verification rule
   Nix package output evaluation (exactly the three supported targets), and the
   native release build (6m02s, zero Rust compiler warnings). Rust application
   source is unchanged; the preceding full Rust suite remains applicable.
+
+### Stream recovery after a long pause — 2026-10-15
+
+- Fixed automatic HTTP stream retries restarting songs at zero after a broken
+  connection. Recovery reopens the existing request at the last playback position,
+  preserves headers and pause state, and keeps the queue and scrobble state.
+  It does not repeat source setup or now-playing submissions. Streams may briefly
+  rebuffer while decoding back to the retained position.
+- Delayed retries remain scoped to the failed playback attempt. Stop or a newer
+  selection invalidates them; an old ready event cannot cancel pending recovery.
+  Resuming during recovery waits for audio readiness. Retry counters no longer
+  reset while buffering or paused.
+- Added hardware-free loopback/request and app-event regressions for retained
+  position, authentication headers, pause/readiness, resume during recovery,
+  duplicate/stale retries and Stop. Updated README and shared playback help;
+  shortcut bindings and layouts are unchanged.
+- Final isolated cargo test: **496 passed, 0 failed, 4 ignored**. Formatting,
+  strict all-target Clippy and whitespace checks passed. Native ARM64 macOS
+  release build passed in **5m12s with zero Rust compiler warnings**. Nix
+  replayed the previously recorded cached C.UTF-8 shell locale diagnostics.
+  Long-pause listening against the personal server remains a manual check;
+  automated tests do not stream from or mutate that server. Restart with ./run.
+  No installed binary replacement was performed.

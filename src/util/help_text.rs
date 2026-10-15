@@ -73,6 +73,7 @@ COMPILATIONS (Subsonic / Navidrome)
 
 PLAYBACK
   Space          Play / Pause
+                 Interrupted streams retry from the current position, preserving pause.
   < >            Previous / next track
   Shift+←→       Seek ±10 s
   Ctrl+Shift+↑↓  Volume

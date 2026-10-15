@@ -376,7 +376,9 @@ impl EventLoop {
 
                                 // Deferred error counter reset: only clear after 5s of
                                 // sustained playback, confirming the track is truly playing
-                                if state.consecutive_playback_errors > 0 {
+                                if state.consecutive_playback_errors > 0
+                                    && state.playback.status == PlayStatus::Playing
+                                {
                                     if let Some(started) = state.playback.playback_started_at {
                                         if started.elapsed() >= Duration::from_secs(5) {
                                             state.consecutive_playback_errors = 0;

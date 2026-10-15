@@ -558,6 +558,17 @@ impl AudioPlayer {
         }
     }
 
+    /// Reopen a failed HTTP stream without losing its credentials, position or
+    /// desired pause state. Buffered/local playback uses the source retry path.
+    pub fn retry_stream(&mut self, position: Duration) -> Result<bool> {
+        if self.stream.is_none() {
+            return Ok(false);
+        }
+        self.invalidate_playback();
+        self.start_stream_at(position, false)?;
+        Ok(true)
+    }
+
     pub fn stop(&mut self) {
         self.stream = None;
         self.invalidate_playback();
@@ -1014,6 +1025,65 @@ mod tests {
         let old_id = player.playback_id();
         player.stop();
         assert_ne!(old_id, player.playback_id());
+    }
+
+    #[tokio::test]
+    async fn interrupted_stream_retry_preserves_position_headers_and_pause() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/track", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let len = socket.read(&mut request).await.unwrap();
+            assert!(String::from_utf8_lossy(&request[..len])
+                .to_ascii_lowercase()
+                .contains("x-test-token: fixture"));
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nRIFF")
+                .await
+                .unwrap();
+        });
+        let (mut player, commands) = player_with_mailbox();
+        let (events, _receiver) = mpsc::channel(8);
+        let mut headers = HeaderMap::new();
+        headers.insert("x-test-token", "fixture".parse().unwrap());
+        player.stream = Some(Arc::new(StreamSession {
+            url,
+            headers,
+            fallback_url: None,
+            events,
+            client: reqwest::Client::builder().no_proxy().build().unwrap(),
+        }));
+        player.pause();
+        let old_id = player.playback_id();
+        assert!(player.retry_stream(Duration::from_secs(123)).unwrap());
+        assert_ne!(old_id, player.playback_id());
+        server.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok(BackendCommand::PlayStream {
+                    playback_id, input, ..
+                }) = commands.try_recv()
+                {
+                    assert_eq!(playback_id, player.playback_id());
+                    assert_eq!(input.start_position, Duration::from_secs(123));
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(player
+            .backend
+            .as_ref()
+            .unwrap()
+            .state
+            .desired_paused
+            .load(Ordering::Acquire));
+        player.stop();
+        assert!(!player.retry_stream(Duration::from_secs(123)).unwrap());
     }
 
     #[test]

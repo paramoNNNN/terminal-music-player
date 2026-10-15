@@ -226,6 +226,8 @@ different backend.
 Click selects without recentering; click the selected row to drill. Double-click
 plays; right-click opens the track menu. Drag reorders queue rows. Clicking or
 dragging the waveform or scrubber seeks; streams may rebuffer.
+Interrupted streams retry from the current position and preserve pause, including
+when a connection breaks during a long pause. Recovery may briefly rebuffer.
 
 **Search…** sits above **browse**. Highlight it for the theme-colored logo and
 press Enter to search. Settings → Textamp → Themes shows the active theme's logo, or previews a highlighted theme.

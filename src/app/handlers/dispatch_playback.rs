@@ -185,7 +185,15 @@ pub async fn dispatch(
             }
             PlayStatus::Paused => {
                 audio.resume();
-                state.playback.status = PlayStatus::Playing;
+                state.playback.status = if state.playback.retry_pending
+                    == Some(state.playback.request_id)
+                    || (state.consecutive_playback_errors > 0
+                        && state.playback.playback_started_at.is_none())
+                {
+                    PlayStatus::Buffering
+                } else {
+                    PlayStatus::Playing
+                };
             }
             PlayStatus::Stopped if state.current_track().is_some() => {
                 helpers::play_current_track(event_tx, state, audio);
@@ -315,9 +323,27 @@ pub async fn dispatch(
         }
 
         PlaybackAction::RetryCurrentTrack => {
-            // Replay the current track without resetting the error counter.
-            // Used by PlaybackError handler to retry before skipping.
-            helpers::play_current_track(event_tx, state, audio);
+            // Recover the existing stream at the last audible position. Starting
+            // a new source play resets position and duplicates now-playing work.
+            match audio.retry_stream(std::time::Duration::from_millis(state.playback.position_ms)) {
+                Ok(true) => {
+                    state.playback.request_id = audio.playback_id();
+                    if state.playback.status != PlayStatus::Paused {
+                        state.playback.status = PlayStatus::Buffering;
+                    }
+                }
+                Ok(false) => helpers::play_current_track(event_tx, state, audio),
+                Err(error) => {
+                    state.playback.request_id = audio.playback_id();
+                    let _ = event_tx.try_send(
+                        crate::app::event::PlaybackEvent::PlaybackError {
+                            playback_id: Some(state.playback.request_id),
+                            message: error.to_string(),
+                        }
+                        .into(),
+                    );
+                }
+            }
         }
     }
     let mut follow_ups = Vec::new();
