@@ -5,7 +5,7 @@ import re
 import struct
 import tarfile
 
-SYSTEMS = {"x86_64-linux", "aarch64-linux", "x86_64-darwin", "aarch64-darwin"}
+SYSTEMS = {"x86_64-linux", "aarch64-linux", "aarch64-darwin"}
 MAX_BINARY = 128 * 1024 * 1024
 
 
@@ -19,7 +19,7 @@ def validate_binary(data, system):
         if len(data) < 64 or data[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<H", data, 18)[0] != expected:
             raise ValueError("Binary is not the expected Linux architecture")
     else:
-        expected = 0x1000007 if system.startswith("x86_64") else 0x100000C
+        expected = 0x100000C
         if len(data) < 32 or data[:4] != b"\xcf\xfa\xed\xfe" or struct.unpack_from("<I", data, 4)[0] != expected:
             raise ValueError("Binary is not the expected macOS architecture")
 

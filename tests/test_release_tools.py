@@ -125,7 +125,6 @@ class ReleaseTools(unittest.TestCase):
     def test_installer_selects_native_architecture_and_directs_nixos_to_cache(self):
         for operating_system, machine, expected in [
             ("Darwin", "arm64", "aarch64-darwin"),
-            ("Darwin", "x86_64", "x86_64-darwin"),
             ("Linux", "aarch64", "aarch64-linux"),
             ("Linux", "x86_64", "x86_64-linux"),
         ]:
@@ -133,6 +132,12 @@ class ReleaseTools(unittest.TestCase):
                  patch.object(installer.platform, "machine", return_value=machine), \
                  patch.object(installer.Path, "exists", return_value=False):
                 self.assertEqual(installer.host_system(), expected)
+        with patch.object(installer.platform, "system", return_value="Darwin"), \
+             patch.object(installer.platform, "machine", return_value="x86_64"):
+            with self.assertRaisesRegex(ValueError, "Apple Silicon"):
+                installer.host_system()
+        with self.assertRaisesRegex(ValueError, "Unsupported platform"):
+            packager.package("x86_64-darwin", self.source, self.root / "intel", "c" * 40)
         with patch.object(installer.platform, "system", return_value="Linux"), \
              patch.object(installer.platform, "machine", return_value="x86_64"), \
              patch.object(installer.Path, "exists", return_value=True):

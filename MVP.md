@@ -18,7 +18,7 @@ cargo build --locked --release --bin textamp
 
 Alternatively, `nix run .` builds the packaged application. Its build plan has
 been evaluated; the complete Nix package build has not been run. The flake supports
-Intel and Apple Silicon Macs, plus x86-64 and ARM Linux. Native macOS validation
+Apple Silicon Macs, plus x86-64 and ARM Linux. Native macOS validation
 on this MacBook is recorded below; the full Nix package build remains unverified.
 
 On a Mac without Nix, install Rust and the Xcode command line tools, then run
@@ -521,3 +521,16 @@ at the user's server. See AGENTS.md and README.md for upstream verification rule
   GitHub CLI is unauthenticated locally; Git uses the existing SSH remote.
   GitHub settings, Cachix account/token setup and release tagging still require
   setup; no personal binary replacement was performed here.
+
+### Remove Intel macOS distribution support — 2026-10-14
+
+- Removed x86_64-darwin from native release and Cachix build matrices, Nix
+  package/dev-shell outputs and archive tools. The installer rejects Intel Macs
+  before any download. Apple Silicon macOS and x86_64/ARM64 Linux remain supported.
+- Updated distribution documentation and existing fixture coverage for Intel
+  rejection. Earlier four-platform validation entries above describe the prior
+  configuration.
+- Validation passed: eight distribution fixture tests, actionlint/shellcheck,
+  Nix package output evaluation (exactly the three supported targets), and the
+  native release build (6m02s, zero Rust compiler warnings). Rust application
+  source is unchanged; the preceding full Rust suite remains applicable.

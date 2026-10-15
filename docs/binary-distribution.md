@@ -1,7 +1,7 @@
 # Prebuilt Textamp: Nix cache and GitHub Releases
 
-The repository stays private. GitHub Actions builds Linux and macOS on x86_64
-and ARM64. There are two installation routes:
+The repository stays private. GitHub Actions builds Linux on x86_64
+and ARM64, and macOS on Apple Silicon (ARM64). There are two installation routes:
 
 - **NixOS / Nix / Home Manager:** keep using the flake package. A private Cachix
   cache supplies the exact package and its runtime dependencies, avoiding Rust
@@ -22,7 +22,7 @@ and ARM64. There are two installation routes:
    the GitHub UI, never in this repository or in chat.
 3. Push the workflows to `origin`. **Nix binary cache** runs on `master` pushes,
    `v*` tags and manual dispatch. It builds/tests the exact existing flake output
-   on all four systems, runs the isolated terminal smoke test, and pushes its
+   on all three systems, runs the isolated terminal smoke test, and pushes its
    runtime closure. The job is skipped until `CACHIX_CACHE` is configured; a
    missing token then fails with a setup message.
 4. On each installing machine, install Cachix (`nix shell nixpkgs#cachix` works)
@@ -128,12 +128,12 @@ git push origin v1.0.0
 ```
 
 Use a new version tag for subsequent releases. The release publishes only after
-all four native jobs succeed; it does not overwrite an existing release. A
+all three native jobs succeed; it does not overwrite an existing release. A
 manual run builds downloadable workflow artifacts without publishing a release.
 Cachix publication is a separate workflow and requires its one-time setup.
 
 Archives are named `textamp-aarch64-darwin.tar.gz`,
-`textamp-x86_64-darwin.tar.gz`, `textamp-aarch64-linux.tar.gz` and
+`textamp-aarch64-linux.tar.gz` and
 `textamp-x86_64-linux.tar.gz`. macOS binaries target macOS 13 or later. Native
 Linux archives require system ALSA/OpenSSL 3 libraries (x86_64 builds use Ubuntu
 22.04; ARM64 builds use Ubuntu 24.04). NixOS installations use the Nix cache,

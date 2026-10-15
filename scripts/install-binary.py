@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import tempfile
 
-from release_common import verified_binary
+from release_common import SYSTEMS, verified_binary
 
 REPO = "paramoNNNN/terminal-music-player"
 
@@ -18,8 +18,8 @@ REPO = "paramoNNNN/terminal-music-player"
 def host_system():
     operating_system = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system())
     architecture = {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64", "amd64": "x86_64"}.get(platform.machine().lower())
-    if not operating_system or not architecture:
-        raise ValueError("Supported platforms are Linux and macOS on x86_64 or ARM64")
+    if f"{architecture}-{operating_system}" not in SYSTEMS:
+        raise ValueError("Supported platforms are Apple Silicon macOS and Linux on x86_64 or ARM64")
     if operating_system == "linux" and Path("/etc/NIXOS").exists():
         raise ValueError("On NixOS, use the Textamp flake with Cachix; see docs/binary-distribution.md")
     return f"{architecture}-{operating_system}"
