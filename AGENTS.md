@@ -6,8 +6,9 @@ Read [HANDOFF.md](HANDOFF.md) and [MVP.md](MVP.md) before making changes.
 The immediate task is to build and validate this existing MVP on the MacBook,
 fix native macOS blockers, and record the results. Continue the textamp-based
 implementation; the source audit and implementation choice are complete.
-Only NixOS and macOS terminal use are in scope. Keep the GitHub repository
-private and push only to the user's `origin`, never to upstream.
+Only NixOS and macOS terminal use are in scope. The user has authorized making this fork public and listing it in NUR.
+Keep the AI-modification notice and original attribution. Push only to the
+user's `origin`, never to upstream.
 Use **`,` (comma)** for Settings; F2 conflicts with the user's brightness keys.
 Enter server credentials locally in the TUI, never in chat or shell arguments.
 The remaining project instructions below still apply.

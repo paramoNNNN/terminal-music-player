@@ -1,14 +1,23 @@
 # textamp
 
+**This fork is fully modified by AI.** All modifications in this fork were
+made by AI coding agents. The original application was
+created by John Bergmayer; this notice describes this fork's modifications.
+
+Based on [bergmayer/textamp](https://github.com/bergmayer/textamp) at commit
+[`0d794c7`](https://github.com/bergmayer/textamp/commit/0d794c7a207992a95ad3ff2880e5c0e8713fa9db).
+Original authorship and the [Unlicense](LICENSE) are preserved.
+
 For this NixOS/MacBook MVP, start with [MVP.md](MVP.md) and run `./run`.
 
 ## Prebuilt binaries and Nix cache
 
 GitHub Actions can build Apple Silicon macOS and x86_64/ARM64 Linux releases,
-and populate an authenticated Cachix cache for the existing flake package. See
+and populate the public `terminal-music-player` Cachix cache for the flake package. See
 [the setup and installation guide](docs/binary-distribution.md) for GitHub
-variables/secrets, private-cache access and complete NixOS/Home Manager examples.
-You do not need to publish this private project to NUR or create `nur.nix`.
+variables/secrets and complete NixOS/Home Manager examples.
+See [NUR publishing and public installation](nix/README.md) for the public package entrypoint.
+The root `default.nix` exports `textamp` for NUR. NUR indexing requires registration.
 
 Once a release is published, macOS can install/update it without compiling:
 
@@ -24,11 +33,10 @@ configured before remote prebuilt downloads are available.
 ## Add Textamp to a Nix configuration
 
 The repository flake exports `packages.<system>.default` for x86_64/aarch64 Linux
-and aarch64 macOS. Add this input to your existing flake (the repository is private, so
-use an SSH identity with access):
+and aarch64 macOS. Once this repository is public, add this input to your existing flake:
 
 ```nix
-inputs.textamp.url = "git+ssh://git@github.com/paramoNNNN/terminal-music-player.git?ref=master";
+inputs.textamp.url = "github:paramoNNNN/terminal-music-player/master";
 ```
 
 Include `textamp` in your existing `outputs` arguments, then add an inline module
@@ -56,7 +64,7 @@ For Home Manager, add the same inline module to its `modules` list and use
 `environment.systemPackages` in its modules list; the package selects macOS
 through `pkgs.stdenv.hostPlatform.system`.
 
-Push local commits to your private `origin` before another machine can fetch
+Push local commits to your `origin` before another machine can fetch
 them. In the configuration checkout, update the input and apply your normal
 configuration rebuild, for example:
 
@@ -68,8 +76,8 @@ sudo nixos-rebuild switch --flake .#my-host
 For standalone Home Manager, use `home-manager switch --flake .#your-profile`.
 The lock file pins Textamp; repeat the input update to adopt a newer commit.
 For a local checkout, an input such as
-`inputs.textamp.url = "path:/home/taha/projects/terminal-music-player";` avoids
-fetching the private remote, but that path must exist on the evaluating machine.
+`inputs.textamp.url = "path:/path/to/terminal-music-player";` avoids
+fetching the remote, but that path must exist on the evaluating machine.
 Launch `textamp`, then use comma Settings to enter server credentials locally;
 keep passwords out of the Nix configuration and Nix store.
 

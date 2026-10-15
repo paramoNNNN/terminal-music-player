@@ -14,10 +14,10 @@ a graphical interface and general-purpose installers are outside scope.
 
 ## Repository and implementation
 
-- Private GitHub repo: https://github.com/paramoNNNN/terminal-music-player
+- GitHub repo: https://github.com/paramoNNNN/terminal-music-player
 - Working branch: `master`. The initial MVP commit is `4464619`.
-- `origin` is the user's private repo. Keep it private. Never push to bergmayer's
-  upstream repo. A fresh clone may not have an `upstream` remote; one is not
+- The user authorized publishing this repository as a public fork on 2026-10-15,
+  with an explicit AI-modification notice. Never push to bergmayer's upstream repo. A fresh clone may not have an `upstream` remote; one is not
   needed to build or test.
 - Based on textamp commit `0d794c7a207992a95ad3ff2880e5c0e8713fa9db`, Unlicense.
 - Rust, Ratatui/Crossterm, Tokio, native Rodio/CPAL audio. This implementation
