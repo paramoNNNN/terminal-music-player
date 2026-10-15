@@ -112,6 +112,10 @@ pub fn handle_app_event(
     };
 
     match event {
+        Event::FocusChanged(focused) => {
+            state.terminal_focused = focused;
+            vec![]
+        }
         Event::Data(DataEvent::ArtistsLoaded {
             library_key,
             result,
@@ -530,6 +534,29 @@ pub fn handle_app_event(
             state.set_error(msg);
             vec![]
         }
+        Event::Playback(PlaybackEvent::ScrobbleFinished {
+            playback_id,
+            track_key,
+            result,
+        }) => {
+            // A late response must not label another song, or a replay of the
+            // same song, as scrobbled. LibraryResult also guards account switches.
+            if playback_id != state.playback.request_id
+                || state
+                    .current_track()
+                    .is_none_or(|track| track.rating_key != track_key)
+            {
+                return vec![];
+            }
+            state.playback.scrobble_status = match result {
+                Ok(()) => crate::app::state::ScrobbleStatus::Scrobbled,
+                Err(error) => {
+                    state.set_status(format!("Play history was not saved: {error}"));
+                    crate::app::state::ScrobbleStatus::Failed
+                }
+            };
+            vec![]
+        }
         Event::Playback(PlaybackEvent::TrackStarted) => {
             state.playback.status = PlayStatus::Playing;
             state.playback.position_ms = 0;
@@ -872,6 +899,13 @@ pub fn handle_app_event(
                 if !actions.is_empty() {
                     return actions;
                 }
+            }
+
+            // Queue covers load only for the visible rows, using the same
+            // bounded cache, pending requests and failure backoff as browse art.
+            let queue_art = super::dispatch_miller::collect_queue_art(state);
+            if !queue_art.is_empty() {
+                return vec![SystemAction::LoadAlbumArt(queue_art).into()];
             }
 
             // Track-details pane: lazy-fetch sonically-similar tracks

@@ -46,6 +46,8 @@ impl InputReader {
                     let mapped = match raw_event {
                         Ok(CrosstermEvent::Key(key)) => Some(Event::Key(key)),
                         Ok(CrosstermEvent::Mouse(mouse)) => Some(Event::Mouse(mouse)),
+                        Ok(CrosstermEvent::FocusGained) => Some(Event::FocusChanged(true)),
+                        Ok(CrosstermEvent::FocusLost) => Some(Event::FocusChanged(false)),
                         Ok(CrosstermEvent::Resize(width, height)) => {
                             Some(Event::Resize(width, height))
                         }
@@ -444,6 +446,12 @@ impl EventLoop {
             for event in direct_events {
                 if let Event::InputError(error) | Event::WorkerFailed(error) = &event {
                     anyhow::bail!("{error}");
+                }
+                if matches!(&event, Event::FocusChanged(_)) {
+                    // Terminal graphics may have been discarded while this tab
+                    // was inactive. Reset protocols and Ratatui's diff together.
+                    ui::invalidate_artwork();
+                    terminal.clear()?;
                 }
                 let event_needs_render =
                     !matches!(&event, Event::Tick) || tick_requires_render(state);

@@ -2994,3 +2994,48 @@ async fn artist_discovery_uses_page_artist_and_sonic_song_seeds_without_playback
         .any(|(method, _)| matches!(method.as_str(), "stream" | "scrobble" | "reportPlayback")));
     task.abort();
 }
+
+#[tokio::test]
+async fn scrobble_status_tracks_the_loopback_server_response() {
+    use textamp::app::state::ScrobbleStatus;
+    for accepted in [true, false] {
+        let (url, requests, task) = server(move |method, params| {
+            assert_eq!(method, "scrobble");
+            assert_eq!(params.get("submission").map(String::as_str), Some("true"));
+            if accepted {
+                (200, envelope(json!({})))
+            } else {
+                (
+                    200,
+                    json!({"subsonic-response":{"status":"failed","version":"1.16.1",
+                    "error":{"code":0,"message":"fixture rejection"}}})
+                    .to_string(),
+                )
+            }
+        })
+        .await;
+        let session = session(url);
+        let track = session.track(serde_json::from_value(song("submitted", 1, 1)).unwrap());
+        let mut app = App::new(session);
+        app.state.queue.tracks = vec![track.clone()];
+        app.state.queue.index = Some(0);
+        app.state.playback.request_id = 19;
+        textamp::app::sources::navidrome::scrobble(&mut app.state, &app.tx, &track);
+        assert!(app.state.playback.scrobble_reported);
+        assert_eq!(
+            app.state.playback.scrobble_status,
+            ScrobbleStatus::Submitting
+        );
+        app.receive().await;
+        assert_eq!(
+            app.state.playback.scrobble_status,
+            if accepted {
+                ScrobbleStatus::Scrobbled
+            } else {
+                ScrobbleStatus::Failed
+            }
+        );
+        assert_eq!(requests.lock().await.len(), 1);
+        task.abort();
+    }
+}

@@ -338,7 +338,16 @@ Play Track++ plays the selected track and following tracks.
 
 Use `:` or right-click → **Go to Artist Page** to open the selected artist,
 album's artist or song's performer overview. Now Playing displays source bitrate
-and favorite status. Bitrate-limited Navidrome playback also shows the requested
+and favorite status, plus scrobble progress. **Scrobbled** appears only after
+Navidrome accepts the play-history submission; pending, submitting and failed
+states are shown separately. This confirms the Navidrome response, not delivery
+to an external scrobbling service. Local/WebDAV sources show scrobbling as unavailable.
+Queue rows include small track covers, with placeholders for missing artwork,
+and a blank row separates the waveform from the bottom controls when space allows.
+Automatic artwork uses text-based covers while the terminal is unfocused and
+restores native graphics on return. macOS Now Playing receives the current cover
+along with track metadata and playback progress.
+Bitrate-limited Navidrome playback also shows the requested
 MP3 bitrate separately; it is a requested limit, not a measured stream bitrate.
 Press **F** to toggle the selected song’s favorite status (the playing song in
 Now Playing). Text entry retains F for typing. The server is read before toggling,

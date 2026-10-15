@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::event::PlaybackEvent;
 use futures::{stream, StreamExt};
 
 pub fn play(state: &mut AppState, audio: &mut AudioPlayer, tx: &mpsc::Sender<Event>) {
@@ -22,6 +23,7 @@ pub fn play(state: &mut AppState, audio: &mut AudioPlayer, tx: &mpsc::Sender<Eve
         state.playback.position_ms = 0;
         state.playback.duration_ms = track.duration_ms();
         state.playback.scrobble_reported = false;
+        state.playback.scrobble_status = Default::default();
         state.playback.status = PlayStatus::Buffering;
         state.waveform = crate::app::state::WaveformState {
             track_key: Some(track.rating_key.clone()),
@@ -111,25 +113,30 @@ pub fn scrobble(state: &mut AppState, tx: &mpsc::Sender<Event>, track: &Track) {
         return;
     }
     let id = song_id.clone();
+    let track_key = track.rating_key.clone();
+    let playback_id = state.playback.request_id;
+    state.playback.scrobble_reported = true;
+    state.playback.scrobble_status = crate::app::state::ScrobbleStatus::Submitting;
     // Do not replace a previous track's pending submission on fast navigation.
     let tx = tx.clone();
     let generation = state.library_generation;
     crate::app::tasks::spawn(async move {
-        if let Err(error) = session
+        let result = session
             .client
             .call("scrobble", &[("id", id), ("submission", "true".into())])
             .await
-        {
-            let _ = tx
-                .send(Event::for_library(
-                    generation,
-                    Event::Effect(
-                        SystemAction::SetStatus(format!("Play history was not saved: {error}"))
-                            .into(),
-                    ),
-                ))
-                .await;
-        }
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+        let _ = tx
+            .send(Event::for_library(
+                generation,
+                Event::Playback(PlaybackEvent::ScrobbleFinished {
+                    playback_id,
+                    track_key,
+                    result,
+                }),
+            ))
+            .await;
     });
 }
 

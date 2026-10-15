@@ -40,7 +40,10 @@ PLAY-ALBUM ROW  (tracks columns)
   Scroll track metadata with the wheel, or PgUp/PgDn while the pane has focus.
   `:` / right-click → Go to Artist Page opens albums and songs for the selection.
   F toggles favorite for the selected song (playing song in Now Playing).
-  Now Playing shows source bit rate, requested transcoding and favorite status.
+  Now Playing shows source bit rate, requested transcoding, favorite and scrobble status.
+  Scrobbled confirms the server saved play history; pending/failed stays explicit.
+  Queue rows include track artwork when available.
+  Artwork stays visible when unfocused; macOS Now Playing includes the current cover.
   Track lists/pickers show ♥ only for favorited songs.
   `:` / right-click → Browse Record Labels or Go to Label opens albums/artists.
   Label pages: Tab albums/artists, Enter opens, Esc backs out; mouse supported.

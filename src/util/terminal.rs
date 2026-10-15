@@ -7,8 +7,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use crossterm::{
     cursor,
     event::{
-        DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
-        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -99,6 +99,7 @@ fn restore_writer<W: Write>(writer: &mut W) -> io::Result<()> {
         execute!(writer, PopKeyboardEnhancementFlags),
     );
     remember_first(&mut first_error, execute!(writer, DisableMouseCapture));
+    remember_first(&mut first_error, execute!(writer, DisableFocusChange));
     remember_first(&mut first_error, execute!(writer, LeaveAlternateScreen));
     remember_first(&mut first_error, execute!(writer, cursor::Show));
     remember_first(&mut first_error, writer.flush());
@@ -135,6 +136,8 @@ pub fn setup_terminal() -> io::Result<TerminalSession> {
         restore_stdio_best_effort();
         return Err(error);
     }
+
+    let _ = execute!(stdout, EnableFocusChange);
 
     // Unsupported terminals harmlessly ignore this protocol extension.
     let _ = execute!(

@@ -112,6 +112,51 @@ pub fn collect_viewport_art(state: &AppState) -> Vec<(String, String)> {
     )
 }
 
+/// Covers for visible queue rows. The last rendered viewport also covers
+/// Library split mode; hidden/full-screen queues never initiate downloads.
+pub fn collect_queue_art(state: &AppState) -> Vec<(String, String)> {
+    if state.fullscreen_active || state.artwork.suppress_loads {
+        return vec![];
+    }
+    let Some(session) = state.sources.active.navidrome() else {
+        return vec![];
+    };
+    let Some(region) = state.hit_regions.queue_content.as_ref() else {
+        return vec![];
+    };
+    let count = (region.track_list_inner.height as usize / 2).min(ART_BATCH_LIMIT);
+    let tracks = if state.playback_mode == crate::app::state::PlaybackMode::Radio {
+        &state.radio.tracks
+    } else {
+        &state.queue.tracks
+    };
+    let offset = state.scroll.queue.unwrap_or_else(|| {
+        crate::services::NavigationService::calc_scroll_offset(
+            state.list_state.queue_index,
+            count,
+            tracks.len(),
+        )
+    });
+    let mut seen = std::collections::HashSet::new();
+    tracks
+        .iter()
+        .skip(offset)
+        .take(count)
+        .filter_map(|track| {
+            let crate::library::track::TrackOrigin::Navidrome { source_id, .. } = &track.origin
+            else {
+                return None;
+            };
+            if source_id != &session.source.id {
+                return None;
+            }
+            let thumb = track.best_thumb()?;
+            (state.artwork.needs_grid_art(thumb) && seen.insert(thumb.to_owned()))
+                .then(|| (thumb.to_owned(), thumb.to_owned()))
+        })
+        .collect()
+}
+
 /// Collect art for EVERY row of `col`, ignoring the
 /// `ART_BATCH_LIMIT` viewport window. Used when the user explicitly
 /// enables artwork on a long column (a 5,000-track playlist's

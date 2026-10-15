@@ -68,6 +68,10 @@ pub fn restore_bio_artwork_native_protocol() {
     BIO_ARTWORK_RENDERER.with(|r| r.borrow_mut().restore_native_protocol());
 }
 
+pub(super) fn clear_bio_artwork_cache() {
+    BIO_ARTWORK_RENDERER.with(|renderer| renderer.borrow_mut().clear());
+}
+
 /// Render the entire UI.
 pub fn render(frame: &mut Frame, state: &AppState) {
     LAST_FULLSCREEN.with(|last| {
@@ -852,7 +856,10 @@ fn render_queue_and_visualizer_in(
                     Style::default().fg(t.colors.fg_secondary),
                 ),
                 Line::styled(
-                    format!(" {favorite}"),
+                    format!(
+                        " {favorite} · {}",
+                        screens::now_playing::scrobble_label(state)
+                    ),
                     Style::default().fg(t.colors.fg_accent),
                 ),
             ]),
@@ -862,14 +869,21 @@ fn render_queue_and_visualizer_in(
         area.height = area.height.saturating_sub(details.height);
     }
 
-    // Keep most vertical space for the queue. The waveform is a compact strip
-    // (at most six rows including borders), including in Library split mode.
-    let waveform_height = (area.height / 5)
+    // Keep a blank row above the bottom controls so they do not touch the
+    // waveform border. Very short terminals keep that row for queue content.
+    let footer_gap = u16::from(area.height >= 10);
+    let waveform_area_height = area.height.saturating_sub(footer_gap);
+    // The waveform stays compact (at most six rows), including Library split mode.
+    let waveform_height = (waveform_area_height / 5)
         .clamp(3, 6)
-        .min(area.height.saturating_sub(4));
+        .min(waveform_area_height.saturating_sub(4));
     let split = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(waveform_height)])
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(waveform_height),
+            Constraint::Length(footer_gap),
+        ])
         .split(area);
 
     screens::now_playing::render_queue_mode(frame, state, split[0]);

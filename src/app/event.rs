@@ -22,6 +22,8 @@ pub enum Event {
     Mouse(MouseEvent),
     /// Terminal resized to (cols, rows).
     Resize(u16, u16),
+    /// Terminal window/tab activation; graphics must be restored after focus changes.
+    FocusChanged(bool),
     /// The terminal input source failed; stop instead of spinning forever.
     InputError(String),
     WorkerFailed(String),

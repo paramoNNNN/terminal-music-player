@@ -698,7 +698,17 @@ pub fn render_thumbnail(
         .artwork
         .grid_cache
         .get(key)
-        .or_else(|| thumb.and_then(|thumb| state.artwork.grid_cache.get(thumb)));
+        .or_else(|| thumb.and_then(|thumb| state.artwork.grid_cache.get(thumb)))
+        .or_else(|| {
+            // Reuse the already loaded full-size cover, including embedded art
+            // for a playing local/WebDAV file, without downloading audio for art.
+            state
+                .artwork
+                .current_thumb
+                .as_deref()
+                .filter(|current| *current == key || Some(*current) == thumb)
+                .and(state.artwork.current_data.as_ref())
+        });
     if cached.is_some_and(|data| render_grid_image(frame, area, key, data)) {
         return;
     }

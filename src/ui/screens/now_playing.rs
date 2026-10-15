@@ -388,8 +388,17 @@ fn render_track_list(frame: &mut Frame, state: &AppState, area: Rect) {
 
     // 2-row layout: each track takes 2 rows (title + artist-album subtitle)
     let visible_item_count = visible_height / 2;
-    let max_text_width = inner.width.saturating_sub(6) as usize;
-    let subtitle_width = (inner.width as usize).saturating_sub(7);
+    // Two rows make a pixel-square 4-column cover; leave one column
+    // between it and the text. Row heights and mouse hit targets stay unchanged.
+    let cover_width = if inner.width >= 20 { 5 } else { 0 };
+    let text_area = Rect::new(
+        inner.x + cover_width,
+        inner.y,
+        inner.width.saturating_sub(cover_width),
+        inner.height,
+    );
+    let max_text_width = text_area.width.saturating_sub(6) as usize;
+    let subtitle_width = (text_area.width as usize).saturating_sub(7);
 
     let total_display = tracks.len();
 
@@ -530,7 +539,19 @@ fn render_track_list(frame: &mut Frame, state: &AppState, area: Rect) {
     }
 
     let list = List::new(items);
-    frame.render_widget(list, inner);
+    frame.render_widget(list, text_area);
+    if cover_width > 0 {
+        for (row, track) in tracks
+            .iter()
+            .skip(scroll_offset)
+            .take(visible_item_count)
+            .enumerate()
+        {
+            let cover = Rect::new(inner.x, inner.y + row as u16 * 2, 4, 2);
+            let key = track.best_thumb().unwrap_or(&track.rating_key);
+            crate::ui::artwork::render_thumbnail(frame, state, cover, key, track.best_thumb());
+        }
+    }
 
     // Scrollbar for long lists
     if total_display > visible_item_count {
@@ -728,7 +749,7 @@ fn render_track_info_panel(frame: &mut Frame, state: &AppState, area: Rect) {
                 Style::default().fg(t.colors.fg_muted),
             ));
             text.push(Line::styled(
-                format!("   {favorite}"),
+                format!("   {favorite} · {}", scrobble_label(state)),
                 Style::default().fg(t.colors.fg_accent),
             ));
         }
@@ -1562,6 +1583,23 @@ fn intensity_color(value: u8) -> Color {
             let t = (value - 201) as u16;
             Color::Rgb(255, 255, (t * 255 / 54) as u8)
         }
+    }
+}
+
+pub(crate) fn scrobble_label(state: &AppState) -> &'static str {
+    if !state.current_track().is_some_and(|track| {
+        matches!(
+            track.origin,
+            crate::library::track::TrackOrigin::Navidrome { .. }
+        )
+    }) {
+        return "Scrobbling unavailable";
+    }
+    match state.playback.scrobble_status {
+        crate::app::state::ScrobbleStatus::Waiting => "Scrobble pending",
+        crate::app::state::ScrobbleStatus::Submitting => "Scrobbling…",
+        crate::app::state::ScrobbleStatus::Scrobbled => "✓ Scrobbled",
+        crate::app::state::ScrobbleStatus::Failed => "Scrobble failed",
     }
 }
 

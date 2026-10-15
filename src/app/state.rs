@@ -2226,6 +2226,7 @@ pub struct AppState {
     pub search_tab: SearchTab,
 
     // Terminal size
+    pub terminal_focused: bool,
     pub terminal_width: u16,
     pub terminal_height: u16,
 
@@ -2951,6 +2952,7 @@ impl AppState {
             alt_bar_until: None,
             volume_slider_until: None,
             search_tab: SearchTab::default(),
+            terminal_focused: true,
             terminal_width: 80,
             terminal_height: 24,
             image_loaded: HashMap::new(),
@@ -4367,6 +4369,16 @@ pub enum SimilarMode {
 }
 
 /// Playback state.
+/// A queued submission is not a confirmed server scrobble.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ScrobbleStatus {
+    #[default]
+    Waiting,
+    Submitting,
+    Scrobbled,
+    Failed,
+}
+
 #[derive(Debug, Clone)]
 pub struct PlaybackState {
     /// Monotonic identity of the current local playback attempt. Async audio
@@ -4382,9 +4394,10 @@ pub struct PlaybackState {
     pub duration_ms: u64,
     pub volume: f32,
     pub muted: bool,
-    /// True once server has accepted (or we have queued) the played/scrobble
-    /// report for this track. Reset only when a new track starts.
+    /// Submission was dispatched for this playback; prevents duplicate reports.
+    /// Confirmation is tracked separately in `scrobble_status`.
     pub scrobble_reported: bool,
+    pub scrobble_status: ScrobbleStatus,
     /// When the current track transitioned to Playing (for grace period on TrackEnded detection).
     pub playback_started_at: Option<std::time::Instant>,
 }
@@ -4401,6 +4414,7 @@ impl Default for PlaybackState {
             volume: 0.8,
             muted: false,
             scrobble_reported: false,
+            scrobble_status: ScrobbleStatus::Waiting,
             playback_started_at: None,
         }
     }

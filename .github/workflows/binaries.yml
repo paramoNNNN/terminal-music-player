@@ -60,6 +60,14 @@ jobs:
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
           python3 -m unittest discover -s tests -p 'test_release_tools.py' -v
+      - name: Verify native macOS Now Playing artwork
+        if: runner.os == 'macOS'
+        env:
+          XDG_CONFIG_HOME: ${{ runner.temp }}/textamp/native/config
+          XDG_DATA_HOME: ${{ runner.temp }}/textamp/native/data
+          XDG_CACHE_HOME: ${{ runner.temp }}/textamp/native/cache
+          XDG_STATE_HOME: ${{ runner.temp }}/textamp/native/state
+        run: cargo run --locked --example system_media_check -- --native
       - name: Build and smoke test
         run: |
           cargo build --locked --release --bin textamp

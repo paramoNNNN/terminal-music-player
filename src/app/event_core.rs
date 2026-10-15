@@ -98,6 +98,11 @@ pub enum DataEvent {
 
 #[derive(Debug, Clone)]
 pub enum PlaybackEvent {
+    ScrobbleFinished {
+        playback_id: u64,
+        track_key: String,
+        result: Result<(), String>,
+    },
     TrackStarted,
     TrackEnded,
     PlaybackPaused,

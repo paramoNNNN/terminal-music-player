@@ -408,6 +408,8 @@ pub fn play(
     state.playback.status = PlayStatus::Buffering;
     state.playback.position_ms = 0;
     state.playback.duration_ms = track.duration_ms();
+    state.playback.scrobble_reported = false;
+    state.playback.scrobble_status = Default::default();
     state.waveform = Default::default();
     state.spectrogram = Default::default();
     state.artwork.current_data = None;

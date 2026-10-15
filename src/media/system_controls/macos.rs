@@ -3,11 +3,15 @@
 use super::Command;
 use crate::app::action::PlaybackAction;
 use crate::app::{state::PlayStatus, AppState};
-use objc2::rc::{autoreleasepool, Retained};
+use block2::RcBlock;
+use objc2::rc::{autoreleasepool, Allocated, Retained};
 use objc2::runtime::{AnyClass, AnyObject};
 use objc2::{define_class, msg_send, sel, ClassType, MainThreadMarker};
+use objc2_core_foundation::CGSize;
 use objc2_foundation::{NSDate, NSNumber, NSObject, NSObjectProtocol, NSString};
 use std::collections::VecDeque;
+use std::ptr::NonNull;
+use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
 #[link(name = "AppKit", kind = "framework")]
@@ -17,6 +21,7 @@ unsafe extern "C" {
     static MPMediaItemPropertyTitle: *const NSString;
     static MPMediaItemPropertyArtist: *const NSString;
     static MPMediaItemPropertyAlbumTitle: *const NSString;
+    static MPMediaItemPropertyArtwork: *const NSString;
     static MPMediaItemPropertyPlaybackDuration: *const NSString;
     static MPNowPlayingInfoPropertyElapsedPlaybackTime: *const NSString;
     static MPNowPlayingInfoPropertyPlaybackRate: *const NSString;
@@ -31,6 +36,7 @@ struct Snapshot {
     position: u64,
     duration: u64,
     status: PlayStatus,
+    artwork: Option<Arc<[u8]>>,
 }
 #[derive(Default)]
 struct Bridge {
@@ -94,6 +100,13 @@ pub fn sync(state: &AppState) -> Vec<Command> {
     let Some(bridge) = BRIDGE.get() else {
         return Vec::new();
     };
+    // Reuse immutable image bytes across position updates; artwork arrival is
+    // itself a snapshot change, even when the terminal is not focused.
+    let previous = bridge
+        .snapshot
+        .lock()
+        .ok()
+        .and_then(|snapshot| snapshot.clone());
     let snapshot = state
         .current_track()
         .filter(|_| state.playback.status != PlayStatus::Stopped)
@@ -105,6 +118,20 @@ pub fn sync(state: &AppState) -> Vec<Command> {
             position: state.playback.position_ms,
             duration: state.playback.duration_ms.max(track.duration_ms()),
             status: state.playback.status,
+            artwork: state.artwork.current_data.as_deref().and_then(|data| {
+                let current = state.artwork.current_thumb.as_deref()?;
+                if current != track.rating_key && Some(current) != track.best_thumb() {
+                    return None;
+                }
+                Some(
+                    previous
+                        .as_ref()
+                        .and_then(|snapshot| snapshot.artwork.as_ref())
+                        .filter(|bytes| bytes.as_ref() == data)
+                        .cloned()
+                        .unwrap_or_else(|| Arc::from(data)),
+                )
+            }),
         });
     let key = snapshot.as_ref().map(|snapshot| snapshot.key.as_str());
     let actions = bridge
@@ -124,12 +151,37 @@ pub fn sync(state: &AppState) -> Vec<Command> {
     actions
 }
 
-unsafe fn publish(center: &AnyObject, snapshot: Option<&Snapshot>) {
+/// Native objects stay on the AppKit thread. The copied block owns its image
+/// for as long as MediaPlayer can request artwork; no filesystem or network I/O
+/// is performed from that callback.
+unsafe fn native_artwork(bytes: &[u8]) -> Option<Retained<AnyObject>> {
+    unsafe {
+        let data: Retained<AnyObject> = msg_send![objc2::class!(NSData),
+            dataWithBytes: bytes.as_ptr().cast::<std::ffi::c_void>(), length: bytes.len()];
+        let image_class = AnyClass::get(c"NSImage")?;
+        let allocated: Allocated<AnyObject> = msg_send![image_class, alloc];
+        let image: Option<Retained<AnyObject>> = msg_send![allocated, initWithData: &*data];
+        let image = image?;
+        let size: CGSize = msg_send![&*image, size];
+        if size.width <= 0.0 || size.height <= 0.0 {
+            return None;
+        }
+        let handler = RcBlock::new(move |_requested: CGSize| NonNull::from(&*image));
+        let artwork_class = AnyClass::get(c"MPMediaItemArtwork")?;
+        let allocated: Allocated<AnyObject> = msg_send![artwork_class, alloc];
+        msg_send![allocated, initWithBoundsSize: size, requestHandler: &*handler]
+    }
+}
+
+type CachedArtwork = Option<(Arc<[u8]>, Option<Retained<AnyObject>>)>;
+
+unsafe fn publish(center: &AnyObject, snapshot: Option<&Snapshot>, cached: &mut CachedArtwork) {
     // SAFETY: selectors, argument types and ownership follow the public
     // MPNowPlayingInfoCenter / Foundation APIs; caller holds main-thread access
     // and an autorelease pool. NSString keys are Apple's documented constants.
     unsafe {
         let Some(snapshot) = snapshot else {
+            *cached = None;
             let _: () = msg_send![center, setPlaybackState: 3_isize];
             let _: () = msg_send![center, setNowPlayingInfo: Option::<&AnyObject>::None];
             return;
@@ -142,6 +194,19 @@ unsafe fn publish(center: &AnyObject, snapshot: Option<&Snapshot>) {
         ] {
             let value = NSString::from_str(value);
             let _: () = msg_send![&dictionary, setObject: &*value, forKey: key];
+        }
+        if let Some(bytes) = snapshot.artwork.as_ref() {
+            if cached
+                .as_ref()
+                .is_none_or(|(previous, _)| previous != bytes)
+            {
+                *cached = Some((bytes.clone(), native_artwork(bytes)));
+            }
+            if let Some((_, Some(artwork))) = cached.as_ref() {
+                let _: () = msg_send![&dictionary, setObject: &**artwork, forKey: &*MPMediaItemPropertyArtwork];
+            }
+        } else {
+            *cached = None;
         }
         for (key, value) in [
             (
@@ -222,6 +287,7 @@ fn run_inner(
                 .spawn(work)?;
             let mode = NSString::from_str("kCFRunLoopDefaultMode");
             let mut previous: Option<Snapshot> = None;
+            let mut cached_artwork: CachedArtwork = None;
             while !worker.is_finished() {
                 autoreleasepool(|_| -> anyhow::Result<()> {
                     let latest = BRIDGE
@@ -231,7 +297,7 @@ fn run_inner(
                         })
                         .flatten();
                     if latest != previous {
-                        publish(&center, latest.as_ref());
+                        publish(&center, latest.as_ref(), &mut cached_artwork);
                         // Observers are used only by the opt-in native fixture.
                         if let Err(error) = observe(&center, latest.as_ref(), &target) {
                             tracing::error!("Native media fixture: {error:#}");
@@ -247,7 +313,7 @@ fn run_inner(
                     Ok(())
                 })?;
             }
-            publish(&center, None);
+            publish(&center, None, &mut cached_artwork);
             observe(&center, None, &target)?;
             for command in commands {
                 let _: () = msg_send![&command, setEnabled: false];
@@ -288,6 +354,10 @@ pub fn verify_native() -> anyhow::Result<()> {
             state.playback.status = PlayStatus::Playing;
             state.playback.position_ms = 12_000;
             state.playback.duration_ms = 120_000;
+            let mut png = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::new_rgb8(32, 32).write_to(&mut png, image::ImageFormat::Png)?;
+            state.artwork.current_thumb = Some("native-fixture".into());
+            state.artwork.current_data = Some(png.into_inner());
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
                 let commands = sync(&state);
@@ -360,6 +430,13 @@ pub fn verify_native() -> anyhow::Result<()> {
                         "Native playback value mismatch"
                     );
                 }
+                let artwork: Option<Retained<AnyObject>> =
+                    msg_send![&info, objectForKey: &*MPMediaItemPropertyArtwork];
+                let artwork = artwork
+                    .ok_or_else(|| anyhow::anyhow!("Native Now Playing artwork is missing"))?;
+                let image: Option<Retained<AnyObject>> = msg_send![&*artwork,
+                    imageWithSize: CGSize { width: 32.0, height: 32.0 }];
+                anyhow::ensure!(image.is_some(), "Native artwork callback returned no image");
                 let actual: isize = msg_send![center, playbackState];
                 anyhow::ensure!(
                     actual

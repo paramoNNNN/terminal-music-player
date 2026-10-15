@@ -39,6 +39,7 @@ pub async fn dispatch(
         state.playback.position_ms = 0;
         state.playback.duration_ms = 0;
         state.playback.scrobble_reported = false;
+        state.playback.scrobble_status = Default::default();
         state.playback.playback_started_at = None;
         state.set_playback_mode(PlaybackMode::None);
 
