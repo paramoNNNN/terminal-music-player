@@ -17,6 +17,7 @@ pub struct HitRegions {
     pub library_option_scroll: usize,
     pub biography_google: Option<Rect>,
     pub biography_text: Option<ScrollableTextRegion>,
+    pub text_popup: Option<ScrollableTextRegion>,
     pub settings_textamp: Option<SettingsContentRegion>,
     /// Actual wrapped help content and viewport, including split layouts.
     pub help: Option<ScrollableTextRegion>,

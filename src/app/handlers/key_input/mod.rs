@@ -64,6 +64,29 @@ pub fn handle_key(
         state.popups.close_all();
         return vec![SystemAction::Quit.into()];
     }
+    // Some terminals forward media keys themselves; desktop/global keys arrive
+    // through MPRIS. Both routes use the same idempotent playback reducers.
+    if let KeyCode::Media(media_key) = key.code {
+        if key.kind == crossterm::event::KeyEventKind::Release {
+            return vec![];
+        }
+        use crate::media::system_controls::{playback_action, Command};
+        use crossterm::event::MediaKeyCode as M;
+        let command = match media_key {
+            M::Play => Some(Command::Play),
+            M::Pause => Some(Command::Pause),
+            M::PlayPause => Some(Command::Toggle),
+            M::Stop => Some(Command::Stop),
+            M::TrackNext => Some(Command::Next),
+            M::TrackPrevious => Some(Command::Previous),
+            _ => None,
+        };
+        return command
+            .and_then(|command| playback_action(command, state))
+            .map(Action::from)
+            .into_iter()
+            .collect();
+    }
     if state.popups.sound_output_active {
         return crate::app::sound_output::key(key, state);
     }
@@ -102,16 +125,24 @@ pub fn handle_key(
         }
     }
     if let Some(popup) = &mut state.popups.text {
+        let max_scroll = state
+            .hit_regions
+            .text_popup
+            .as_ref()
+            .map_or(u16::MAX, |region| region.max_scroll());
+        popup.scroll = popup.scroll.min(max_scroll);
         match key.code {
             KeyCode::Esc => {
                 state.popups.text = None;
                 state.sources.nav_tasks.remove("lyrics");
+                state.sources.nav_tasks.remove("track-details");
             }
             KeyCode::Up => popup.scroll = popup.scroll.saturating_sub(1),
-            KeyCode::Down => popup.scroll = popup.scroll.saturating_add(1),
+            KeyCode::Down => popup.scroll = popup.scroll.saturating_add(1).min(max_scroll),
             KeyCode::PageUp => popup.scroll = popup.scroll.saturating_sub(10),
-            KeyCode::PageDown => popup.scroll = popup.scroll.saturating_add(10),
+            KeyCode::PageDown => popup.scroll = popup.scroll.saturating_add(10).min(max_scroll),
             KeyCode::Home => popup.scroll = 0,
+            KeyCode::End => popup.scroll = max_scroll,
             _ => {}
         }
         return vec![];

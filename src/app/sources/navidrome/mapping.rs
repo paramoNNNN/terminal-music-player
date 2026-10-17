@@ -172,6 +172,7 @@ impl Session {
                 bit_depth: t.bit_depth,
                 sampling_rate: t.sampling_rate,
                 audio_channels: t.channel_count,
+                container: t.suffix.clone(),
                 audio_codec: t.suffix,
                 bitrate: t.bit_rate,
                 part: vec![MediaPart {

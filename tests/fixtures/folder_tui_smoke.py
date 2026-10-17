@@ -12,10 +12,13 @@ import sys
 import tempfile
 import termios
 import time
+import unicodedata
 import wave
 
 wikipedia = "--wikipedia" in sys.argv[2:]
 browse_only = "--browse-only" in sys.argv[2:]
+ghostty = "--ghostty" in sys.argv[2:]
+ghostty_tmux = "--ghostty-tmux" in sys.argv[2:]
 assert not (wikipedia and browse_only), "Wikipedia smoke requires track metadata loading"
 
 with tempfile.TemporaryDirectory(prefix="textamp-folder-tui-") as temporary:
@@ -48,11 +51,89 @@ with tempfile.TemporaryDirectory(prefix="textamp-folder-tui-") as temporary:
     )
     env["TERM"] = "xterm-256color"
     env["TERM_PROGRAM"] = "Apple_Terminal"
+    env.pop("TMUX", None)
+    if ghostty or ghostty_tmux:
+        env["TERM"] = "xterm-ghostty"
+        env["TERM_PROGRAM"] = "ghostty"
+    if ghostty_tmux:
+        # Simulate a multiplexer without contacting the user's tmux server.
+        env["TMUX"] = "/tmp/textamp-fixture-tmux,1,0"
+        env["TERM"] = "tmux-256color"
+        env["TERM_PROGRAM"] = "tmux"
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 36, 130, 0, 0))
     before = termios.tcgetattr(slave)
     process = subprocess.Popen([str(pathlib.Path(sys.argv[1]).resolve())], stdin=slave, stdout=slave, stderr=slave, env=env)
     output = bytearray()
+    screen_output = bytearray()
+    answered_queries = set()
+
+    def read_output():
+        data = os.read(master, 65536)
+        output.extend(data)
+        screen_output.extend(data)
+        if ghostty and "graphics" not in answered_queries and b"\x1b[5n" in screen_output:
+            # Behave like a native Ghostty terminal: acknowledge Kitty support,
+            # report 10x20 pixel cells, then finish the capability query. Without
+            # a reply, the probe's stdin reader can consume navigation keys.
+            os.write(master, b"\x1b_Gi=31;OK\x1b\\\x1b[?64;4c\x1b[6;20;10t\x1b[0n")
+            answered_queries.add("graphics")
+
+    def screen_text():
+        # Ratatui emits only changed cells. Reconstruct cursor-addressed text:
+        # stripping CSI from a diff loses letters reused from the prior frame.
+        raw = screen_output.decode("utf-8", errors="replace")
+        cells = [[" "] * 240 for _ in range(80)]
+        x = y = 0
+        i = 0
+        while i < len(raw):
+            char = raw[i]
+            if char == "\x1b":
+                match = re.match(r"\x1b\[([0-?]*)([ -/]*)([@-~])", raw[i:])
+                if match:
+                    params, _, command = match.groups()
+                    values = [int(n) for n in re.findall(r"\d+", params)]
+                    n = values[0] if values and values[0] else 1
+                    if command in "Hf":
+                        y = (values[0] if values else 1) - 1
+                        x = (values[1] if len(values) > 1 else 1) - 1
+                    elif command == "G": x = n - 1
+                    elif command == "d": y = n - 1
+                    elif command == "A": y -= n
+                    elif command == "B": y += n
+                    elif command == "C": x += n
+                    elif command == "D": x -= n
+                    elif command in "JK":
+                        mode = values[0] if values else 0
+                        if command == "J" and mode == 2:
+                            cells = [[" "] * 240 for _ in range(80)]
+                        elif command == "J" and mode == 0:
+                            cells[y][x:] = [" "] * (240 - x)
+                            for row in range(y + 1, 80): cells[row] = [" "] * 240
+                        elif command == "K":
+                            start, end = (0, 240) if mode == 2 else ((0, x + 1) if mode == 1 else (x, 240))
+                            cells[y][start:end] = [" "] * (end - start)
+                    x, y = max(0, min(x, 239)), max(0, min(y, 79))
+                    i += len(match.group())
+                    continue
+                if raw[i:i + 2] == "\x1b]":
+                    ends = [end for end in (raw.find("\x07", i + 2), raw.find("\x1b\\", i + 2)) if end >= 0]
+                    if not ends: break
+                    end = min(ends)
+                    i = end + (1 if raw[end] == "\x07" else 2)
+                    continue
+                i += 3 if raw[i:i + 2] in ("\x1b(", "\x1b)") else 2
+                continue
+            if char == "\r": x = 0
+            elif char == "\n": y = min(y + 1, 79)
+            elif char == "\b": x = max(x - 1, 0)
+            elif char >= " " and not unicodedata.combining(char):
+                cells[y][x] = char
+                width = 2 if unicodedata.east_asian_width(char) in "WF" else 1
+                if width == 2 and x + 1 < 240: cells[y][x + 1] = ""
+                x = min(x + width, 239)
+            i += 1
+        return "\n".join("".join(row) for row in cells).encode()
 
     def wait_for(text):
         # Differential terminal draws can move across already-correct spaces
@@ -62,9 +143,9 @@ with tempfile.TemporaryDirectory(prefix="textamp-folder-tui-") as temporary:
         started = time.monotonic()
         deadline = started + (50 if wikipedia else 20)
         redrawn = False
-        while normalized(text) not in normalized(output) and time.monotonic() < deadline:
+        while normalized(text) not in normalized(screen_text()) and time.monotonic() < deadline:
             if select.select([master], [], [], 0.1)[0]:
-                output.extend(os.read(master, 65536))
+                read_output()
             if process.poll() is not None:
                 break
             if not redrawn and time.monotonic() - started > 2:
@@ -76,15 +157,22 @@ with tempfile.TemporaryDirectory(prefix="textamp-folder-tui-") as temporary:
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, xp, yp))
                 process.send_signal(signal.SIGWINCH)
                 redrawn = True
-        plain = re.sub(rb"\x1b\[[0-9;?]*[a-zA-Z]", b"", output)
+        plain = screen_text()
         diagnostic = re.sub(r"[\u2500-\u28ff]", "", plain.decode("utf-8", errors="replace"))
-        assert normalized(text) in normalized(output), f"UI did not display {text!r}; exit={process.poll()}; tail={diagnostic[-6000:]!r}"
+        assert normalized(text) in normalized(plain), f"UI did not display {text!r}; exit={process.poll()}; tail={diagnostic[:10000]!r}"
 
     try:
         wait_for(b"Fixture Album")
         assert b"Sign in to Plex" not in output
         os.write(master, b"\r")
         wait_for(b"02 Silence.wav")
+        if os.environ.get("TEXTAMP_MPRIS_SMOKE") == "1":
+            status = subprocess.run(
+                ["playerctl", "--player=textamp", "status"],
+                capture_output=True, timeout=5, check=True,
+            )
+            assert status.stdout.strip() == b"Stopped", "browsing started playback"
+            print("PASS: executable reports Stopped through MPRIS/playerctl")
         if not browse_only:
             os.write(master, b"\r")
             if wikipedia:
@@ -103,6 +191,29 @@ with tempfile.TemporaryDirectory(prefix="textamp-folder-tui-") as temporary:
             os.write(master, b"\x1bOS")  # F4 closes the popup
             time.sleep(0.2)
         if browse_only:
+            output.clear()
+            os.write(master, b":codec")
+            wait_for(b"View track details")
+            os.write(master, b"\r")
+            wait_for(b"source metadata")
+            wait_for(b"pcm_s16le")  # asynchronous local metadata has arrived
+            os.write(master, b"\x1b[6~")  # audio properties can be below the fold
+            wait_for(b"44100 Hz")
+            wait_for(b"16 bit")
+            # Focus transitions must not clear the terminal or switch graphics
+            # modes. Drain preceding frames before checking the focus redraws.
+            time.sleep(0.2)
+            while select.select([master], [], [], 0)[0]:
+                screen_output.extend(os.read(master, 65536))
+            output.clear()
+            os.write(master, b"\x1b[O\x1b[I")
+            deadline = time.monotonic() + 0.4
+            while time.monotonic() < deadline:
+                if select.select([master], [], [], 0.05)[0]:
+                    read_output()
+            assert b"\x1b[2J" not in output, "focus change cleared the terminal"
+            os.write(master, b"\x1b[F\x1b[H\x1b")  # End/Home, close details
+            time.sleep(0.2)
             output.clear()
             os.write(master, b",")  # Settings: comma avoids Mac brightness keys
             wait_for(b"Add library")
@@ -142,11 +253,19 @@ with tempfile.TemporaryDirectory(prefix="textamp-folder-tui-") as temporary:
         deadline = time.monotonic() + 10
         while process.poll() is None and time.monotonic() < deadline:
             if select.select([master], [], [], 0.1)[0]:
-                output.extend(os.read(master, 65536))
+                read_output()
         assert process.poll() == 0, f"unexpected exit {process.poll()}"
         assert termios.tcgetattr(slave) == before, "terminal not restored"
+        if ghostty:
+            assert b"\x1b_G" in screen_output, "Direct Ghostty never probed native images"
+            print("PASS: direct Ghostty negotiates native graphics")
+        if ghostty_tmux:
+            assert b"\x1b_G" not in screen_output, "Ghostty received Kitty graphics/probe commands"
+            assert "\U0010eeee".encode() not in screen_output, "Ghostty received image placeholders"
+            print("PASS: Ghostty compatibility sends no Kitty graphics or placeholders")
         print("PASS: folder-only startup, filename navigation, library switcher, shutdown, and terminal restoration")
         if browse_only:
+            print("PASS: searchable Actions, local track details without playback, focus without terminal clears")
             print("PASS: unified library manager, add/cancel connection form, integrated settings, per-library cache display")
             print("PASS: Ctrl+Q quit and terminal restoration")
         if not browse_only:

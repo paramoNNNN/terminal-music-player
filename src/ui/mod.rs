@@ -76,7 +76,7 @@ pub fn render(frame: &mut ratatui::Frame, state: &AppState) -> RenderFeedback {
     }
 }
 
-/// Drop terminal-side image assumptions after focus/tab changes.
+/// Explicitly reset terminal-side image state (ordinary focus changes retain it).
 pub fn invalidate_artwork() {
     screens::now_playing::clear_artwork_cache();
     artwork::clear_grid_cache();
@@ -89,11 +89,8 @@ fn sync_appearance(state: &AppState) {
         static PREVIOUS: RefCell<Option<(ArtworkMode, View)>> = const { RefCell::new(None) };
     }
     theme::set_theme(state.theme);
-    // Native graphics can disappear in inactive windows. Halfblocks are
-    // ordinary terminal cells, so Auto keeps its cover visible when unfocused.
-    let mode = if state.artwork.mode == ArtworkMode::Auto && !state.terminal_focused {
-        ArtworkMode::Halfblocks
-    } else if state.artwork.mode == ArtworkMode::Auto
+    // Retain encoded images and the terminal diff across window switches.
+    let mode = if state.artwork.mode == ArtworkMode::Auto
         && (std::env::var("TERM_PROGRAM").as_deref() == Ok("Apple_Terminal")
             || std::env::var("TERM_SESSION_ID").is_ok_and(|id| id.contains("com.apple.Terminal")))
     {

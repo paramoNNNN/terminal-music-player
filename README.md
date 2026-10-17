@@ -243,9 +243,14 @@ release dates, label, country, edition, genres, duration, format and audio quali
 Bit rate and sample specifications describe the source files; mixed values are
 shown as ranges. Missing tags are marked as not supplied. Opening an album
 refreshes its details while keeping cached songs usable on failure. Artwork
-uses the detected full-pixel Kitty/iTerm2/Sixel protocol, including inside tmux.
-Halfblocks are a fallback when graphics detection fails or an explicit choice
-in the active library's Display settings.
+uses the detected full-pixel Kitty/iTerm2/Sixel protocol in compatible terminals.
+Ghostty displays full-pixel images when launched directly outside tmux with
+artwork rendering set to Auto. Inside tmux or screen, artwork uses colored
+text-cell halfblocks and skips native graphics probing to avoid the Ghostty/tmux
+crash path. Returning to Auto preserves that session's detected protocol. For
+high-resolution artwork, launch `./run` from a Ghostty window outside tmux.
+Halfblocks and Braille can also be selected explicitly in the active library's
+Display settings.
 Navidrome bitrate-limited playback explicitly requests MP3 so the server cannot
 choose an unsupported decoder format; original quality requests the raw file.
 If playback repeatedly fails, its error dialog retains the underlying cause.
@@ -338,16 +343,32 @@ additional tags through OpenSubsonic; tags absent from its response cannot be
 shown. Refresh older catalog caches with F5 to populate newly retained tags.
 Play Track++ plays the selected track and following tracks.
 
-Use `:` or right-click → **Go to Artist Page** to open the selected artist,
-album's artist or song's performer overview. Now Playing displays source bitrate
+Use `:` or right-click to open the searchable **Actions** menu. Selection details
+and navigation appear first, followed by play/queue, discovery and player commands.
+**Go to artist: …** names each credited performer; **Go to album: …** opens the
+selected song's album without playing it. Artist/album rows also offer
+**Go to Artist Page**. **View track details** opens a scrollable sheet with file
+size, codec, container, bitrate, sample rate, bit depth, channels, credits and all
+available source tags. Local tags are read on demand without starting playback;
+remote audio is never downloaded to populate this sheet. Missing values are
+shown as unavailable. Use arrows, PgUp/PgDn, Home/End, mouse wheel and Esc in
+the details sheet; type in Actions to filter, then Enter or click to choose.
+Now Playing displays source bitrate
 and favorite status, plus scrobble progress. **Scrobbled** appears only after
 Navidrome accepts the play-history submission; pending, submitting and failed
 states are shown separately. This confirms the Navidrome response, not delivery
 to an external scrobbling service. Local/WebDAV sources show scrobbling as unavailable.
 Queue rows include small track covers, with placeholders for missing artwork,
 and a blank row separates the waveform from the bottom controls when space allows.
-Automatic artwork uses text-based covers while the terminal is unfocused and
-restores native graphics on return. macOS Now Playing receives the current cover
+Artwork retains its rendering mode and encoded images across terminal focus
+changes, avoiding full-screen clears and repeated cover uploads on return.
+Linux publishes playback status, title, artist, album, cover artwork, duration and position
+through MPRIS (`org.mpris.MediaPlayer2.textamp`) on the desktop session bus.
+Cover images are shared as local files when loaded, with metadata updates on
+arrival or removal; authenticated server URLs are never exposed to desktop clients.
+Desktop media keys and `playerctl --player=textamp` support play/pause, next,
+previous, stop, seeking and volume. These controls also work while terminal
+menus are open. macOS Now Playing receives the current cover
 along with track metadata and playback progress.
 Bitrate-limited Navidrome playback also shows the requested
 MP3 bitrate separately; it is a requested limit, not a measured stream bitrate.

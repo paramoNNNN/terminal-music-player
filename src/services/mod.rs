@@ -25,6 +25,7 @@ mod playback_service;
 pub mod radio;
 mod search_filter_service;
 pub mod track_context;
+pub mod track_details;
 
 pub use browse_drill::{plan_drill, ClickContext, DrillPlan};
 pub use folder_service::{

@@ -158,8 +158,9 @@ After Mac MVP validation, the original requested features remain:
    on failure/empty results. Never silently switch modes. Distinguish album-seeded
    track mixes from complete-album radio. This selector is not implemented yet.
 5. Verify original and transcoded playback/seek behavior against advertised server
-   capabilities. Native OS media controls remain a later requirement; terminal
-   use does not imply they already work. macOS event-loop integration needs care.
+   capabilities. Native controls now include macOS integration and Linux MPRIS;
+   see the latest `MVP.md` verification record for tested behavior and remaining
+   manual desktop checks. Keep native callbacks outside the app reducers.
 
 Prioritize a working, tested Mac MVP before expanding this backlog. Report what
 was actually tested. Do not claim Plexamp parity. Keep application work in this

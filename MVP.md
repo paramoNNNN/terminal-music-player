@@ -557,3 +557,132 @@ at the user's server. See AGENTS.md and README.md for upstream verification rule
   Long-pause listening against the personal server remains a manual check;
   automated tests do not stream from or mutate that server. Restart with ./run.
   No installed binary replacement was performed.
+
+### Linux media controls, focus rendering and track Actions — 2026-10-17
+
+- Added Linux session-bus MPRIS reporting for status, title, artist, album,
+  duration, position and volume, with playback/capability change notifications.
+  Play/pause, next, previous, stop, seeking and volume enqueue ordinary app
+  playback actions; stale track/attempt commands are rejected. Terminal-forwarded
+  media keys use the same idempotent actions. Bus failures leave the TUI usable.
+- Read-only inspection of this NixOS machine's Hyprland bindings confirmed its
+  media keys already call DMS MPRIS playPause/next/previous. No desktop settings
+  were changed and no commands were sent to personal playback. Physical key use
+  through DMS remains a manual check after restarting the rebuilt player.
+- Focus changes retain the artwork protocol, encoded images and Ratatui diff.
+  Removed the unconditional cache invalidation/full-terminal clear and temporary
+  Auto-to-halfblock switch that caused cover reuploads and flicker on return.
+- Reworked Actions into searchable selection/navigation, play/queue, discovery,
+  external search and player sections. Named artist-credit and album destinations
+  precede global commands; headers cannot be activated. Unicode widths, clipped
+  labels, pointer hit regions, paging and wheel navigation follow visible rows.
+- View track details opens an independent, themed, scrollable metadata sheet for
+  the selected track: source file size/path, codec/container, bitrate, sample rate,
+  bit depth, channels, credits and available tags. Local file tags are read in a
+  cancellable background job without playback; remote audio is never fetched for
+  this sheet. Missing source values stay explicit; stale/closed/library-switched
+  completions cannot replace a newer popup. Updated README, help and shortcut hints.
+- Isolated full cargo test passed: **509 passed, 0 failed, 3 ignored**. This includes
+  a private D-Bus daemon/playerctl fixture for status signals, metadata, transport,
+  seek, volume and stale commands, plus menu clicks/scrolling, selected-versus-
+  playing details, folder selections with mixed directory/file rows, actual local
+  WAV tags/audio metadata and terminal media keys. Folder browsing exposes its
+  selected file directly to Actions; ordered track lists are materialized only
+  for list operations, without eager tag reads or audio downloads.
+  Formatting, strict all-target Clippy, Nix expression parsing and whitespace
+  checks passed. The new D-Bus test initially raced its client property cache;
+  it now queries the property directly while separately verifying change signals.
+- Final optimized x86_64 Linux build (`cargo build --release --bin textamp`)
+  passed in **5m42s with zero compiler warnings**. The final executable passed
+  the private-session-bus terminal smoke: playerctl reported Stopped; browsing
+  and opening local details did not start playback; searchable Actions, metadata
+  paging, focus without terminal clears, Settings/add/cancel/cache controls,
+  library switching, Ctrl+Q and terminal restoration passed. The terminal fixture
+  now reconstructs cursor-addressed cells, so Ratatui's reused characters are not
+  misreported as missing text. Final seek regressions retain the captured track
+  identity even if the command is enqueued after playback changes.
+- Personal credentials/settings/server playback were untouched. No installed
+  binary replacement, commit or push was performed. Restart this checkout with
+  `./run`; physical media-key presses through the desktop remain a user check.
+
+### Ghostty artwork crash compatibility — 2026-10-17
+
+- The user reported Ghostty itself crashing as artwork appears, including before
+  the media/menu changes. Installed Ghostty is **1.3.1**; a read-only tmux client
+  query returned **xterm-ghostty**, while the app inherited TERM=tmux-256color and
+  TERM_PROGRAM=tmux. Ghostty upstream reports similar Kitty graphics/tmux crashes
+  in https://github.com/ghostty-org/ghostty/discussions/11909. This is a matching
+  failure class, not a confirmed diagnosis from the user's crash dump.
+- Startup identifies Ghostty directly or through tmux before negotiating graphics
+  and installs a colored text-cell halfblocks picker for every artwork surface.
+  An unidentified multiplexer client uses that fallback too. Known other clients
+  keep native graphics negotiation. Auto restores the safe picker; no preferences,
+  credentials, music files, desktop configuration or installed Ghostty were changed.
+- The fallback intentionally trades full-pixel graphics for terminal stability.
+  Cached artwork/focus behavior is retained. README, shared help and layout
+  comments document the compatibility behavior.
+- Full isolated cargo test passed: **512 passed, 0 failed, 3 ignored**. New tests
+  cover direct/multiplexed Ghostty detection without graphics probing, preservation
+  of other terminals' native negotiation, large synthetic artwork, resize and
+  Auto/Braille/Halfblocks/Auto transitions with no Kitty commands or placeholders.
+  Solid-color halfblocks can be RGB spaces, so the rendering assertion checks
+  painted colors rather than requiring non-space glyphs. Formatting, strict
+  all-target Clippy and whitespace checks passed.
+- Final x86_64 Linux release build passed in **5m49s with zero compiler warnings**.
+  The actual release executable passed isolated PTY startup/navigation/Settings/
+  details/focus/exit checks with direct Ghostty identification and with a private
+  tmux stand-in reporting xterm-ghostty. Both complete output streams contained
+  no Kitty graphics commands/probes or Unicode image placeholders. Synthetic
+  artwork rendering is covered separately by the renderer regression test.
+- These checks avoid deliberately crashing a real Ghostty window; an interactive
+  check in the user's running Ghostty remains manual. No personal configuration,
+  credentials, installed binary replacement, commit or push. Restart with ./run.
+
+### Restore full-pixel artwork outside tmux — 2026-10-17
+
+- Per the user's preference, this supersedes the blanket Ghostty fallback above:
+  direct Ghostty sessions negotiate native full-pixel images again. tmux/screen
+  sessions use text-cell artwork without graphics probing. Detection also honors
+  TMUX when TERM has been customized, without spawning or querying a tmux server.
+- Auto restores the protocol detected for that session. Explicit per-library
+  artwork preferences are preserved. Launch ./run from a Ghostty window outside
+  tmux and select Auto for high-resolution artwork. Shared help, README and layout
+  comments describe the distinction.
+- Isolated cargo test passed: **512 passed, 0 failed, 3 ignored**. Updated
+  regressions verify direct Ghostty negotiation, restoring native Kitty when
+  returning to Auto, custom TERM with TMUX present, and text-only artwork inside
+  multiplexers. Formatting and strict all-target Clippy passed.
+- Debug executable PTY smoke checks passed for both launch paths. The direct
+  fixture now answers terminal capability queries with Kitty support and pixel
+  cell dimensions; leaving the query unanswered had allowed its stdin reader to
+  consume the fixture's navigation input. tmux output contains no Kitty commands
+  or image placeholders. Checks use isolated local files without playback.
+- Final Linux release build passed in **5m13s with zero compiler warnings**.
+  Both PTY scenarios also passed against the release executable, including
+  navigation, Actions/details, Settings, focus, clean exit and terminal
+  restoration. Actual image appearance in a physical Ghostty window remains an
+  interactive check; these fixtures simulate terminal responses. No personal
+  settings, installed binary replacement, commit or push. Restart with ./run.
+
+### Linux MPRIS cover artwork — 2026-10-17
+
+- The Linux metadata bridge omitted mpris:artUrl entirely. It now shares the
+  loaded playing cover through a desktop-readable local file, with no server
+  URL or credentials. Artwork arriving after playback starts emits Metadata
+  PropertiesChanged; missing or mismatched track artwork removes artUrl.
+- Files are written on the dedicated MPRIS worker under the XDG cache directory,
+  reused while cover bytes are unchanged, and removed when superseded or on
+  normal shutdown. Unique escaped file URLs prevent stale desktop cover caching
+  and support spaces/Unicode in cache paths. Terminal artwork mode is independent.
+- README, shared help and layout comments describe desktop artwork support.
+- Isolated cargo test passed: **513 passed, 0 failed, 3 ignored**. The private
+  D-Bus fixture verifies late artwork arrival, Metadata signals, real image bytes
+  at artUrl, stable URLs across playback updates, omission for unrelated artwork,
+  and removal signals/file cleanup. A file publication test covers escaped
+  spaces/Unicode, reuse and cleanup. Formatting and strict all-target Clippy passed.
+- Final Linux release build passed in **5m16s with zero compiler warnings**.
+  The release PTY fixture passed private-bus playerctl status, tmux graphics
+  suppression, Actions/details, Settings, focus and terminal restoration. Its
+  first run stalled entering the Settings cache page; the unchanged retry passed.
+  The dedicated D-Bus artwork regression passed on the first run. No personal
+  server/settings changes, installed binary replacement, commit or push.

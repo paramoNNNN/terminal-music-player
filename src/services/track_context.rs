@@ -46,6 +46,11 @@ pub struct ContextEntry {
 /// from the original `Track`.
 #[derive(Debug, Clone)]
 pub enum ContextKind {
+    TrackDetails,
+    GoToArtist {
+        artist_key: String,
+    },
+    GoToAlbum,
     /// Visual separator. UIs render a divider; activate is a no-op.
     Separator,
 
@@ -68,11 +73,20 @@ pub enum ContextKind {
     OpenInLibrary,
 
     /// Show sonically-similar tracks for this rating key.
-    ShowSimilarTracks { rating_key: String, title: String },
+    ShowSimilarTracks {
+        rating_key: String,
+        title: String,
+    },
     /// Show sonically-similar albums for this album rating key.
-    ShowSimilarAlbums { rating_key: String, title: String },
+    ShowSimilarAlbums {
+        rating_key: String,
+        title: String,
+    },
     /// Show related artists for this artist rating key.
-    ShowRelatedArtists { artist_key: String, title: String },
+    ShowRelatedArtists {
+        artist_key: String,
+        title: String,
+    },
 
     /// Open the Sonic Adventure launcher pre-seeded with this track
     /// as the starting song.
@@ -106,8 +120,48 @@ pub fn track_context_entries(state: &AppState, track: &Track, floating: bool) ->
     let track_label = format!("{} - {}", track.artist_name(), track.title);
     let album_key = track.parent_rating_key.clone();
     let album_title = track.parent_title.clone();
-    let artist_key = track.grandparent_rating_key.clone();
+    let artist_key = track.grandparent_rating_key.clone().or_else(|| {
+        track
+            .artist_credits
+            .iter()
+            .find_map(|credit| credit.rating_key.clone())
+    });
     let artist_name = track.artist_name().to_string();
+
+    out.push(ContextEntry {
+        label: "View track details".into(),
+        hint: None,
+        kind: ContextKind::TrackDetails,
+    });
+    let mut artists = track.artist_credits.clone();
+    if artists.is_empty() {
+        if let Some(key) = &artist_key {
+            artists.push(crate::library::catalog::ArtistCredit {
+                rating_key: Some(key.clone()),
+                name: track.track_artist().into(),
+            });
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    for artist in artists {
+        if let Some(key) = artist
+            .rating_key
+            .filter(|key| !key.is_empty() && seen.insert(key.clone()))
+        {
+            out.push(ContextEntry {
+                label: format!("Go to artist: {}", artist.name),
+                hint: None,
+                kind: ContextKind::GoToArtist { artist_key: key },
+            });
+        }
+    }
+    if album_key.is_some() && artist_key.is_some() {
+        out.push(ContextEntry {
+            label: format!("Go to album: {}", track.album_name()),
+            hint: None,
+            kind: ContextKind::GoToAlbum,
+        });
+    }
 
     // 1. Playback actions.
     out.push(ContextEntry {

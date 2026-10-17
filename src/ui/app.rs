@@ -17,7 +17,11 @@
 //! │ Library / Now Playing │ :  /  ⇥  ,  \  |                   │
 //! └──────────────────────────────────────────────────────────────┘
 //! The existing `:` command control and right-click track menu share entries,
-//! including capability-gated Sonic Radio; no additional shortcut is needed.
+//! grouped into selection details/navigation, play/queue, discovery and player
+//! commands. View track details opens a scrollable metadata sheet. Native media
+//! controls remain available over overlays; focus changes retain artwork caches.
+//! Linux desktop MPRIS artwork follows the loaded playing cover, independently of terminal rendering.
+//! Direct terminals use native images; tmux/screen share a text-cell picker, including Auto.
 //! Sidebar collections (favorites, album history, AudioMuse categories) are not
 //! duplicated as commands. The existing `:` control still opens the action list.
 //! The untitled sidebar starts with Search, followed by lowercase group headings.
@@ -222,16 +226,30 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     if let Some(popup) = &state.popups.text {
         let area = centered_rect(70, 70, frame.area());
         frame.render_widget(Clear, area);
+        let t = theme();
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(popup.title.as_str())
+            .title_bottom(" ↑↓ / PgUp/PgDn / Home/End · Esc close ")
+            .style(
+                Style::default()
+                    .bg(t.colors.bg_primary)
+                    .fg(t.colors.fg_primary),
+            )
+            .border_style(Style::default().fg(t.colors.title_focused));
+        let inner = block.inner(area);
+        let paragraph = Paragraph::new(popup.text.as_str()).wrap(Wrap { trim: false });
+        let region = crate::app::presentation::ScrollableTextRegion {
+            area: inner,
+            lines: paragraph.line_count(inner.width),
+            visible: inner.height as usize,
+        };
+        let max_scroll = region.max_scroll();
+        state.hit_regions.borrow_mut().text_popup = Some(region);
         frame.render_widget(
-            Paragraph::new(popup.text.as_str())
-                .wrap(Wrap { trim: false })
-                .scroll((popup.scroll, 0))
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(popup.title.as_str())
-                        .title_bottom(" ↑↓ scroll · Esc close "),
-                ),
+            paragraph
+                .scroll((popup.scroll.min(max_scroll), 0))
+                .block(block),
             area,
         );
     }

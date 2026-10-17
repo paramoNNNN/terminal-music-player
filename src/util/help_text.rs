@@ -38,12 +38,17 @@ PLAY-ALBUM ROW  (tracks columns)
   Click the row to play; click an item below to select it.
   Track details: Play Track plays one; Play Track++ plays it and following tracks.
   Scroll track metadata with the wheel, or PgUp/PgDn while the pane has focus.
-  `:` / right-click → Go to Artist Page opens albums and songs for the selection.
+  `:` / right-click opens grouped Actions; type to filter, arrows/PgUp/PgDn to move.
+  Go to artist: … / Go to album: … opens the named selection without playing.
+  View track details shows file size, codec, audio properties and available tags.
+  Details: wheel / arrows / PgUp/PgDn / Home/End scroll; Esc closes.
   F toggles favorite for the selected song (playing song in Now Playing).
   Now Playing shows source bit rate, requested transcoding, favorite and scrobble status.
   Scrobbled confirms the server saved play history; pending/failed stays explicit.
   Queue rows include track artwork when available.
-  Artwork stays visible when unfocused; macOS Now Playing includes the current cover.
+  Artwork stays cached across focus changes; macOS Now Playing includes the cover.
+  Ghostty: Auto shows native images directly; tmux/screen use text-cell artwork.
+  Linux: MPRIS status, cover artwork and media keys (play/pause, next, previous, stop, seek, volume).
   Track lists/pickers show ♥ only for favorited songs.
   `:` / right-click → Browse Record Labels or Go to Label opens albums/artists.
   Label pages: Tab albums/artists, Enter opens, Esc backs out; mouse supported.

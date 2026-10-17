@@ -113,6 +113,7 @@ impl Track {
     ) -> anyhow::Result<Option<Vec<u8>>> {
         use symphonia::core::{io::MediaSourceStream, meta::StandardTagKey, probe::Hint};
         let file = std::fs::File::open(path)?;
+        let size = file.metadata()?.len();
         let mut hint = Hint::new();
         if let Some(ext) = self
             .file_name()
@@ -128,6 +129,27 @@ impl Track {
             &Default::default(),
         )?;
         if let Some(track) = probed.format.default_track() {
+            let params = &track.codec_params;
+            let container = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(str::to_owned);
+            self.media = vec![Media {
+                bit_depth: params.bits_per_sample.or(params.bits_per_coded_sample),
+                sampling_rate: params.sample_rate,
+                audio_channels: params.channels.map(|channels| channels.count() as u8),
+                audio_codec: symphonia::default::get_codecs()
+                    .get_codec(params.codec)
+                    .map(|codec| codec.short_name.into()),
+                container: container.clone(),
+                part: vec![MediaPart {
+                    file: self.stream_part().and_then(|p| p.file.clone()),
+                    size: Some(size),
+                    container,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }];
             if let (Some(frames), Some(time_base)) =
                 (track.codec_params.n_frames, track.codec_params.time_base)
             {
@@ -157,6 +179,14 @@ impl Track {
                 if value.trim().is_empty() {
                     continue;
                 }
+                let tag_key = if tag.key.is_empty() {
+                    tag.std_key
+                        .map(|key| format!("{key:?}"))
+                        .unwrap_or_else(|| "Tag".into())
+                } else {
+                    crate::util::sanitize_display_text(&tag.key).into_owned()
+                };
+                self.metadata_tags.insert(tag_key, value.clone());
                 match tag.std_key {
                     Some(StandardTagKey::TrackTitle) => self.title = value,
                     Some(StandardTagKey::Album) => self.parent_title = Some(value),

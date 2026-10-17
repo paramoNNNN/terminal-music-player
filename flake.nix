@@ -43,7 +43,7 @@
               pkgs.rustfmt
               pkgs.clippy
               pkgs.python3
-            ];
+            ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.dbus pkgs.playerctl ];
             nativeBuildInputs = nativeInputs pkgs;
             buildInputs = libraryInputs pkgs;
             CARGO_BUILD_JOBS = "4";

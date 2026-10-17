@@ -26,7 +26,7 @@ pkgs.rustPlatform.buildRustPackage {
     CARGO_PROFILE_TEST_STRIP = "symbols";
   };
   nativeBuildInputs = [ pkgs.pkg-config ];
-  nativeCheckInputs = [ pkgs.python3 ];
+  nativeCheckInputs = [ pkgs.python3 ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.dbus pkgs.playerctl ];
   buildInputs = [
     pkgs.openssl
   ]

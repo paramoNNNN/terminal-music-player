@@ -199,7 +199,7 @@ fn render_tab_strip(frame: &mut Frame, state: &AppState, area: Rect) {
     // Mirrors classic vim chrome — same row as the Library / Now
     // Playing tabs, on the right edge.
     let palette_hint = if state.view == View::Settings {
-        " F10 menu · ↓/Tab panel · Enter select · : commands · Esc back "
+        " F10 menu · ↓/Tab panel · Enter select · : actions · Esc back "
     } else if state.view == View::Browse
         && state.category_column_focused
         && state.browse_category == crate::app::state::BrowseCategory::Library
@@ -210,13 +210,13 @@ fn render_tab_strip(frame: &mut Frame, state: &AppState, area: Rect) {
                         crate::app::sources::navidrome::commands::CollectionKind::AudioMuse(f)
                             if f.is_search()))
     {
-        " → results · Enter new search · : commands "
+        " → results · Enter new search · : actions "
     } else if matches!(state.view, View::Queue | View::NowPlaying) {
-        " ↑↓ list · Ctrl+U queue · Ctrl+N waveform · : commands "
+        " ↑↓ list · Ctrl+U queue · Ctrl+N waveform · : actions "
     } else if state.tall_mode {
-        " :  /  Tab focus  ,  \\  | "
+        " : actions  /  Tab focus  ,  \\  | "
     } else {
-        " :  /  \u{21e5}  ,  \\  | "
+        " : actions  /  \u{21e5}  ,  \\  | "
     };
 
     let favorite_hint = if crate::app::sources::toggle_favorite_action(state).is_some() {

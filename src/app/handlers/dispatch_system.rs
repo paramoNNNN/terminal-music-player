@@ -83,6 +83,88 @@ pub async fn dispatch(
     state: &mut AppState,
 ) -> Result<Vec<Action>> {
     match action {
+        SystemAction::ShowTrackDetails(mut track) => {
+            state.sources.nav_request_id = state.sources.nav_request_id.wrapping_add(1);
+            let request_id = state.sources.nav_request_id;
+            let generation = state.library_generation;
+            state.popups.close_all();
+            state.popups.text = Some(crate::app::state::TextPopup {
+                title: " Track details · source metadata ".into(),
+                text: crate::services::track_details::describe(&track),
+                scroll: 0,
+                request_id,
+            });
+            state.sources.nav_tasks.remove("track-details");
+            if let crate::library::track::TrackOrigin::Folder { source_id, path } =
+                track.origin.clone()
+            {
+                if let Some(source) = config
+                    .folder_sources
+                    .iter()
+                    .find(|s| {
+                        s.id == source_id
+                            && matches!(s.location, crate::library::FolderLocation::Local { .. })
+                    })
+                    .cloned()
+                {
+                    if let Some(popup) = &mut state.popups.text {
+                        popup.text.push_str("\n\nReading local file tags…");
+                    }
+                    let tx = event_tx.clone();
+                    let fallback = crate::services::track_details::describe(&track);
+                    let task = crate::app::tasks::spawn(async move {
+                        let result = async {
+                            let file = source.file(&path).await?;
+                            crate::app::tasks::spawn_blocking(move || {
+                                track.read_file_metadata(&file.path)?;
+                                Ok::<_, anyhow::Error>(crate::services::track_details::describe(
+                                    &track,
+                                ))
+                            })
+                            .await?
+                        }
+                        .await;
+                        let text = match result {
+                            Ok(text) => text,
+                            Err(error) => format!(
+                                "{fallback}\n\nCould not read local track metadata: {error:#}"
+                            ),
+                        };
+                        let _ = tx
+                            .send(Event::Effect(
+                                SystemAction::TrackDetailsLoaded {
+                                    generation,
+                                    request_id,
+                                    text,
+                                }
+                                .into(),
+                            ))
+                            .await;
+                    });
+                    state.sources.nav_tasks.insert(
+                        "track-details",
+                        (request_id, crate::app::tasks::TaskLease::new(&task)),
+                    );
+                }
+            }
+        }
+        SystemAction::TrackDetailsLoaded {
+            generation,
+            request_id,
+            text,
+        } => {
+            if generation == state.library_generation {
+                if let Some(popup) = state
+                    .popups
+                    .text
+                    .as_mut()
+                    .filter(|popup| popup.request_id == request_id)
+                {
+                    popup.text = text;
+                    state.sources.nav_tasks.remove("track-details");
+                }
+            }
+        }
         SystemAction::Quit => {
             let navidrome_track = state.sources.active.navidrome().and_then(|session| {
                 let track = state.current_track()?;

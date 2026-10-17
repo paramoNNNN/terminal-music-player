@@ -449,12 +449,6 @@ impl EventLoop {
                 if let Event::InputError(error) | Event::WorkerFailed(error) = &event {
                     anyhow::bail!("{error}");
                 }
-                if matches!(&event, Event::FocusChanged(_)) {
-                    // Terminal graphics may have been discarded while this tab
-                    // was inactive. Reset protocols and Ratatui's diff together.
-                    ui::invalidate_artwork();
-                    terminal.clear()?;
-                }
                 let event_needs_render =
                     !matches!(&event, Event::Tick) || tick_requires_render(state);
                 let actions = self.handle_event(event, state);

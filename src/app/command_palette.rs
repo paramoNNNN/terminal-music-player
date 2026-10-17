@@ -510,6 +510,11 @@ pub fn materialize_entries(state: &AppState) -> Vec<PaletteEntry> {
             if matches!(ce.kind, ContextKind::Separator) {
                 continue;
             }
+            let aliases = if matches!(ce.kind, ContextKind::TrackDetails) {
+                vec!["track information file size tags codec format bitrate sample rate bit depth properties metadata".into()]
+            } else {
+                vec![]
+            };
             out.push(PaletteEntry {
                 label: ce.label,
                 hint: ce.hint.unwrap_or_default(),
@@ -517,7 +522,7 @@ pub fn materialize_entries(state: &AppState) -> Vec<PaletteEntry> {
                     kind: ce.kind,
                     track: track_box.clone(),
                 },
-                aliases: vec![],
+                aliases,
             });
         }
     } else if focused_album.is_some() {
@@ -577,7 +582,7 @@ pub fn materialize_entries(state: &AppState) -> Vec<PaletteEntry> {
             aliases: vec!["top best popular songs albums lastfm plays".into()],
         });
     }
-    if let Some(artist_key) = artist_page_key(state) {
+    if let Some(artist_key) = artist_page_key(state).filter(|_| target_track.is_none()) {
         out.push(PaletteEntry {
             label: "Go to Artist Page".into(),
             hint: String::new(),
@@ -731,7 +736,41 @@ pub fn materialize_entries(state: &AppState) -> Vec<PaletteEntry> {
         });
     }
     out.retain(|entry| crate::app::sources::command_visible(state, &entry.command));
+    out.sort_by_key(|entry| entry_group(entry).0);
     out
+}
+
+/// Stable sections in the unfiltered menu; search retains fuzzy relevance.
+pub fn entry_group(entry: &PaletteEntry) -> (u8, &'static str) {
+    use crate::services::track_context::ContextKind as C;
+    use PaletteCommandKind as P;
+    match &entry.command {
+        P::FromTrackContext { kind, .. } => match kind {
+            C::TrackDetails
+            | C::GoToArtist { .. }
+            | C::GoToAlbum
+            | C::OpenInLibrary
+            | C::ArtistBio { .. } => (0, "SELECTION · details & navigation"),
+            C::PlayTrack | C::PlayTrackAndFollowing | C::PlayNextInQueue | C::AddToEndOfQueue => {
+                (1, "PLAY & QUEUE")
+            }
+            C::SearchExternal(_) => (3, "SEARCH OTHER SERVICES"),
+            _ => (2, "DISCOVER"),
+        },
+        P::OpenArtistPage { .. }
+        | P::OpenLabelPage { label: Some(_) }
+        | P::OpenInLibrary
+        | P::ShowArtistBio
+        | P::CycleArtistRanking => (0, "SELECTION · details & navigation"),
+        P::PlayFocusedAlbum
+        | P::PlayFocusedTrack
+        | P::PlayFocusedTrackAndFollowing
+        | P::RemoveFocusedFromQueue
+        | P::UndoQueueEdit => (1, "PLAY & QUEUE"),
+        P::SearchAppleMusic | P::SearchSpotify | P::SearchYouTube => (3, "SEARCH OTHER SERVICES"),
+        P::PlayStation(_) | P::BrowseStations { .. } | P::StationsBack => (5, "RADIO STATIONS"),
+        _ => (4, "PLAYER & LIBRARY"),
+    }
 }
 
 /// Translate a palette command into the same `Action`s the shortcut
@@ -1038,6 +1077,38 @@ pub fn run(cmd: PaletteCommandKind, state: &mut AppState) -> Vec<Action> {
             use crate::app::state::{SimilarMode, View};
             use crate::services::track_context::ContextKind;
             match kind {
+                ContextKind::TrackDetails => {
+                    vec![SystemAction::ShowTrackDetails(track).into()]
+                }
+                ContextKind::GoToArtist { artist_key } => {
+                    vec![BrowseAction::OpenArtistOverview { artist_key }.into()]
+                }
+                ContextKind::GoToAlbum => {
+                    let album =
+                        state.library.albums.iter().find(|album| {
+                            Some(&album.rating_key) == track.parent_rating_key.as_ref()
+                        });
+                    vec![BrowseAction::OpenInLibrary {
+                        artist_key: album
+                            .and_then(|album| album.parent_rating_key.clone())
+                            .or_else(|| {
+                                track.grandparent_rating_key.clone().or_else(|| {
+                                    track
+                                        .artist_credits
+                                        .iter()
+                                        .find_map(|credit| credit.rating_key.clone())
+                                })
+                            })
+                            .unwrap_or_default(),
+                        artist_name: album.map_or_else(
+                            || track.artist_name().into(),
+                            |album| album.artist_name().into(),
+                        ),
+                        album_key: track.parent_rating_key.clone(),
+                        album_title: track.parent_title.clone(),
+                    }
+                    .into()]
+                }
                 ContextKind::Separator => vec![],
                 ContextKind::PlayTrack => vec![QueueAction::PlayTrack(track).into()],
                 ContextKind::PlayTrackAndFollowing => play_focused_track(state, false),
@@ -1215,6 +1286,23 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) -> PaletteOutcome {
         K::Down => {
             let max = state.palette.matches.len().saturating_sub(1);
             state.palette.selected = (state.palette.selected + 1).min(max);
+            return PaletteOutcome::Continue;
+        }
+        K::PageUp => {
+            state.palette.selected = state.palette.selected.saturating_sub(8);
+            return PaletteOutcome::Continue;
+        }
+        K::PageDown => {
+            state.palette.selected =
+                (state.palette.selected + 8).min(state.palette.matches.len().saturating_sub(1));
+            return PaletteOutcome::Continue;
+        }
+        K::Home if state.palette.query.is_empty() => {
+            state.palette.selected = 0;
+            return PaletteOutcome::Continue;
+        }
+        K::End if state.palette.query.is_empty() => {
+            state.palette.selected = state.palette.matches.len().saturating_sub(1);
             return PaletteOutcome::Continue;
         }
         K::Char('p') if ctrl => {

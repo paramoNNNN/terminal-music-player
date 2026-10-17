@@ -13,6 +13,36 @@ use ratatui_image::{picker::Picker, protocol::StatefulProtocol, Resize, Stateful
 
 use crate::app::state::ArtworkMode;
 
+/// Use native images directly and text cells inside terminal multiplexers.
+/// Avoid probing Kitty graphics through tmux, where Ghostty can crash.
+pub fn detect_artwork_picker() -> anyhow::Result<Picker> {
+    let term = std::env::var("TERM").unwrap_or_default();
+    let program = std::env::var("TERM_PROGRAM").unwrap_or_default();
+    let tmux_session = std::env::var_os("TMUX").is_some_and(|value| !value.is_empty());
+    picker_for_terminal(&term, &program, tmux_session, || {
+        Ok(Picker::from_query_stdio()?)
+    })
+}
+
+fn picker_for_terminal(
+    term: &str,
+    program: &str,
+    tmux_session: bool,
+    probe: impl FnOnce() -> anyhow::Result<Picker>,
+) -> anyhow::Result<Picker> {
+    if tmux_session
+        || term.starts_with("tmux")
+        || term.starts_with("screen")
+        || program.eq_ignore_ascii_case("tmux")
+    {
+        tracing::info!(
+            "Using text-cell artwork inside a terminal multiplexer; skipping native graphics probe"
+        );
+        return Ok(Picker::halfblocks());
+    }
+    probe()
+}
+
 /// Artwork renderer using ratatui-image.
 ///
 /// This struct manages the picker (terminal capability detection) and the
@@ -718,4 +748,96 @@ pub fn render_thumbnail(
             .style(Style::default().fg(crate::ui::theme::theme().colors.fg_secondary)),
         area,
     );
+}
+
+#[cfg(test)]
+mod terminal_compatibility_tests {
+    use super::*;
+    use ratatui_image::picker::ProtocolType;
+
+    #[test]
+    fn multiplexers_never_probe_native_graphics() {
+        for (term, program, tmux_session) in [
+            ("tmux-256color", "tmux", false),
+            ("screen-256color", "ghostty", false),
+            ("xterm-256color", "tmux", false),
+            ("xterm-ghostty", "ghostty", true),
+        ] {
+            let picker = picker_for_terminal(term, program, tmux_session, || {
+                panic!("unsafe graphics probe")
+            })
+            .unwrap();
+            assert_eq!(picker.protocol_type(), ProtocolType::Halfblocks);
+        }
+    }
+
+    #[test]
+    fn direct_terminals_including_ghostty_negotiate_native_graphics() {
+        for (term, program) in [
+            ("xterm-ghostty", ""),
+            ("xterm-256color", "Ghostty"),
+            ("xterm-kitty", "kitty"),
+            ("xterm-256color", "WezTerm"),
+        ] {
+            let mut queried = false;
+            let picker = picker_for_terminal(term, program, false, || {
+                queried = true;
+                let mut picker = Picker::halfblocks();
+                picker.set_protocol_type(ProtocolType::Kitty);
+                Ok(picker)
+            })
+            .unwrap();
+            assert!(queried);
+            assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
+            let mut renderer = ArtworkRenderer::new_with_picker(picker);
+            renderer.set_mode(ArtworkMode::Halfblocks);
+            renderer.set_protocol_type(ProtocolType::Halfblocks);
+            renderer.set_mode(ArtworkMode::Auto);
+            renderer.restore_native_protocol();
+            assert_eq!(renderer.protocol_name(), "kitty");
+        }
+    }
+
+    #[test]
+    fn multiplexed_artwork_and_auto_restore_emit_only_text_cells() {
+        let picker =
+            picker_for_terminal("tmux-256color", "tmux", true, || panic!("unsafe probe")).unwrap();
+        let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            768,
+            768,
+            image::Rgb([200, 80, 30]),
+        ));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        let mut renderer = ArtworkRenderer::new_with_picker(picker);
+        for mode in [
+            ArtworkMode::Auto,
+            ArtworkMode::Braille,
+            ArtworkMode::Halfblocks,
+            ArtworkMode::Auto,
+        ] {
+            renderer.set_mode(mode);
+            renderer.restore_native_protocol();
+            assert_eq!(renderer.protocol_name(), "halfblocks");
+            assert!(renderer.load_image(bytes.get_ref(), "fixture"));
+            for (width, height) in [(80, 40), (180, 70)] {
+                let mut terminal =
+                    ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height))
+                        .unwrap();
+                terminal
+                    .draw(|frame| renderer.render(frame, frame.area()))
+                    .unwrap();
+                let cells = &terminal.backend().buffer().content;
+                // A solid-color halfblock is a space with an RGB background.
+                assert!(cells
+                    .iter()
+                    .any(|cell| matches!(cell.bg, Color::Rgb(..))
+                        || matches!(cell.fg, Color::Rgb(..))));
+                assert!(cells
+                    .iter()
+                    .all(|cell| !cell.symbol().contains('\x1b')
+                        && !cell.symbol().contains('\u{10eeee}')));
+            }
+        }
+    }
 }

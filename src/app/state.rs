@@ -3230,7 +3230,27 @@ impl AppState {
 
     /// Visible ordered track list and highlighted row for palette commands.
     /// Never fall back to a retained navigation column from another view.
-    pub fn palette_track_list(&self) -> Option<(&[Track], usize)> {
+    pub fn palette_track_list(&self) -> Option<(std::borrow::Cow<'_, [Track]>, usize)> {
+        // Folder columns retain directory entries rather than eager track/tag
+        // listings. Materialize their visible files only when actions need them.
+        if self.view == View::Browse
+            && self.browse_category == BrowseCategory::Folders
+            && !self.category_column_focused
+        {
+            let source = self.sources.active.folder()?;
+            let column = self.folder_state.as_ref()?.focused()?;
+            let selected = column.selected_item().filter(|item| item.is_track())?;
+            let tracks: Vec<_> = column
+                .items
+                .iter()
+                .filter(|item| item.is_track())
+                .map(|item| Track::from_folder(source, &item.key))
+                .collect();
+            let index = tracks
+                .iter()
+                .position(|track| Some(&track.rating_key) == selected.rating_key.as_ref())?;
+            return Some((std::borrow::Cow::Owned(tracks), index));
+        }
         let (tracks, index): (&[Track], usize) = match self.view {
             View::Queue | View::NowPlaying => (self.playback_tracks(), self.list_state.queue_index),
             View::Browse if !self.category_column_focused => {
@@ -3260,10 +3280,23 @@ impl AppState {
             _ => return None,
         };
         tracks.get(index)?;
-        Some((tracks, index))
+        Some((std::borrow::Cow::Borrowed(tracks), index))
     }
 
     pub fn palette_target_track(&self) -> Option<Track> {
+        if self.view == View::Browse
+            && self.browse_category == BrowseCategory::Folders
+            && !self.category_column_focused
+        {
+            let source = self.sources.active.folder()?;
+            let item = self
+                .folder_state
+                .as_ref()?
+                .focused()?
+                .selected_item()
+                .filter(|item| item.is_track())?;
+            return Some(Track::from_folder(source, &item.key));
+        }
         let (tracks, index) = self.palette_track_list()?;
         tracks.get(index).cloned()
     }

@@ -98,6 +98,7 @@ path = "src/bin/textamp_tui.rs"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

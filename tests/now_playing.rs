@@ -214,7 +214,6 @@ fn current_cover_survives_library_focus_and_terminal_activation_changes() {
         state.view = view;
         for focused in [false, true] {
             handle_core_event(Event::FocusChanged(focused), &mut state, &tx);
-            textamp::ui::invalidate_artwork();
             let terminal = render(&mut state, 120, 42);
             assert_eq!(state.terminal_focused, focused);
             let area = state.hit_regions.queue_content.as_ref().unwrap().art_area;

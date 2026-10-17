@@ -121,9 +121,10 @@ async fn run_tui_mode() -> Result<()> {
         tracing::info!("Apple Terminal detected, using halfblocks protocol for fallback");
         Ok(ratatui_image::picker::Picker::halfblocks())
     } else {
-        // Keep the detected pixel protocol inside tmux too. The image crate
-        // negotiates its passthrough; tmux alone is not a reason to downgrade.
-        ratatui_image::picker::Picker::from_query_stdio()
+        // Direct terminals (including Ghostty) negotiate full-pixel graphics.
+        // Multiplexers get a text-cell picker before storing the native
+        // protocol, so returning to Auto retains their compatibility fallback.
+        textamp::ui::artwork::detect_artwork_picker()
     };
     {
         let picker = picker_result.unwrap_or_else(|error| {

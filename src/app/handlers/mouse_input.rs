@@ -142,8 +142,16 @@ pub fn handle_mouse(event: crossterm::event::MouseEvent, state: &mut AppState) -
     }
     use crossterm::event::{MouseButton, MouseEventKind};
     if let Some(popup) = &mut state.popups.text {
+        let max_scroll = state
+            .hit_regions
+            .text_popup
+            .as_ref()
+            .map_or(u16::MAX, |region| region.max_scroll());
+        popup.scroll = popup.scroll.min(max_scroll);
         match event.kind {
-            MouseEventKind::ScrollDown => popup.scroll = popup.scroll.saturating_add(3),
+            MouseEventKind::ScrollDown => {
+                popup.scroll = popup.scroll.saturating_add(3).min(max_scroll)
+            }
             MouseEventKind::ScrollUp => popup.scroll = popup.scroll.saturating_sub(3),
             _ => {}
         }
@@ -196,6 +204,18 @@ pub fn handle_mouse(event: crossterm::event::MouseEvent, state: &mut AppState) -
     // row → set selection + execute (same as Enter). Click elsewhere
     // inside the popup → no-op (keep open). Click outside → cancel.
     if state.palette.open {
+        match event.kind {
+            MouseEventKind::ScrollDown => {
+                state.palette.selected =
+                    (state.palette.selected + 3).min(state.palette.matches.len().saturating_sub(1));
+                return vec![];
+            }
+            MouseEventKind::ScrollUp => {
+                state.palette.selected = state.palette.selected.saturating_sub(3);
+                return vec![];
+            }
+            _ => {}
+        }
         if let MouseEventKind::Down(MouseButton::Left) = event.kind {
             let regions = state.hit_regions.command_palette.clone();
             if let Some(regions) = regions {
@@ -226,8 +246,7 @@ pub fn handle_mouse(event: crossterm::event::MouseEvent, state: &mut AppState) -
                 }
             }
         }
-        // Swallow non-left-click events while palette is open — no
-        // scrolling / right-click context menus on the overlay.
+        // Other pointer events stay inside the modal menu.
         return vec![];
     }
 

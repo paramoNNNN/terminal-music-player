@@ -58,6 +58,12 @@ pub enum Action {
 
 #[derive(Debug, Clone)]
 pub enum SystemAction {
+    ShowTrackDetails(Box<Track>),
+    TrackDetailsLoaded {
+        generation: u64,
+        request_id: u64,
+        text: String,
+    },
     Quit,
 
     ShowError(String),
